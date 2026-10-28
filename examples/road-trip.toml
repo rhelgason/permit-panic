@@ -1,0 +1,45 @@
+# Copy to config.toml and edit. Find ids with:
+#   permit-panic search grand teton backcountry
+#   permit-panic divisions 4675342 --filter cascade
+
+poll_minutes = 3
+
+[notify]
+# Install the ntfy app (iOS/Android), subscribe to this topic. Pick something unguessable:
+# anyone who knows the topic name can read it.
+ntfy_topic = "permit-panic-CHANGE-ME-1234"
+
+# Multi-night route: each entry in `nights` lists acceptable camp zones for that night,
+# by name fragment or division id. Alerts only when the WHOLE route is open.
+[[watch]]
+name = "Teton Crest Trail"
+kind = "itinerary"
+permit_id = "4675342"
+earliest = 2027-07-15
+latest = 2027-08-31
+nights = [
+  ["4675342030"],                            # Death Canyon Shelf (id, to skip the group site)
+  ["Cascade South Fork", "USFS - Alaska Basin"],
+  ["Cascade North Fork"],
+  ["Paintbrush Upper", "Paintbrush Lower"],
+]
+
+# Trailhead entry quota (Inyo / Yosemite style): alerts when >= group_size spots remain.
+[[watch]]
+name = "Inyo - Rush Creek"
+kind = "entry"
+permit_id = "233262"
+earliest = 2027-07-01
+latest = 2027-07-20
+trailheads = ["Rush Creek"]
+group_size = 2
+
+# Regular campground: alerts on any site open for `nights` consecutive nights.
+# [[watch]]
+# name = "Jenny Lake campground"
+# kind = "campground"
+# campground_id = "247664"
+# earliest = 2027-07-10
+# latest = 2027-07-14
+# nights = 2
+# sites = []   # optional site-name filters
