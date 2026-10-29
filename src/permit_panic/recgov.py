@@ -78,10 +78,23 @@ class RecGov:
             for r in data.get("results", [])
         ]
 
+    def permit_content(self, permit_id: str) -> dict:
+        return self._get(f"/api/permitcontent/{permit_id}")["payload"]
+
     def permit_divisions(self, permit_id: str) -> dict[str, str]:
         """Map division id -> name (camp zones, sites, or trailheads)."""
-        payload = self._get(f"/api/permitcontent/{permit_id}")["payload"]
-        return {k: v.get("name", k) for k, v in (payload.get("divisions") or {}).items()}
+        return {k: v.get("name", k) for k, v in (self.permit_content(permit_id).get("divisions") or {}).items()}
+
+    def permit_kind(self, permit_id: str) -> str:
+        """'entry' if the permit has trailhead quotas, else 'itinerary'."""
+        today = date.today()
+        try:
+            self.entry_month(permit_id, today.year, today.month)
+            return "entry"
+        except RecGovError as e:
+            if "invalid permit id" in str(e):
+                return "itinerary"
+            raise
 
     # --- availability ----------------------------------------------------
 

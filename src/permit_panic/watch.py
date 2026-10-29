@@ -1,79 +1,23 @@
-"""Config loading and the polling loop."""
+"""The polling loop: availability watches plus release/lottery reminders."""
 
 from __future__ import annotations
 
 import json
 import random
 import time
-import tomllib
-from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import notify
+from .config import Config, Watch, load_config
 from .matching import Match, match_campground, match_entry, match_itinerary, months_between, resolve_divisions
 from .recgov import RecGov, RecGovError, booking_url
+from .reminders import Event, describe_lead, due_alerts, parse_events
+
+CONTENT_TTL = 6 * 3600  # permit metadata (zone names, important dates) rarely changes
 
 
-@dataclass
-class Watch:
-    name: str
-    kind: str  # itinerary | entry | campground
-    entity_id: str
-    earliest: date
-    latest: date
-    nights: list[list[str]] = field(default_factory=list)  # itinerary
-    trailheads: list[str] = field(default_factory=list)  # entry
-    group_size: int = 1  # entry
-    stay_nights: int = 1  # campground
-    sites: list[str] = field(default_factory=list)  # campground
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "Watch":
-        kind = d["kind"]
-        if kind not in ("itinerary", "entry", "campground"):
-            raise ValueError(f"{d.get('name')}: unknown kind {kind!r}")
-        return cls(
-            name=d.get("name", kind),
-            kind=kind,
-            entity_id=str(d.get("permit_id") or d["campground_id"]),
-            earliest=_as_date(d["earliest"]),
-            latest=_as_date(d["latest"]),
-            nights=[[str(x) for x in (n if isinstance(n, list) else [n])] for n in d.get("nights", [])]
-            if kind == "itinerary" else [],
-            trailheads=[str(t) for t in d.get("trailheads", [])],
-            group_size=int(d.get("group_size", 1)),
-            stay_nights=int(d.get("nights", 1)) if kind == "campground" else 1,
-            sites=[str(s) for s in d.get("sites", [])],
-        )
-
-
-@dataclass
-class Config:
-    watches: list[Watch]
-    ntfy_topic: str | None = None
-    ntfy_server: str = "https://ntfy.sh"
-    poll_minutes: float = 3.0
-    state_file: Path = Path(".permit-panic-state.json")
-
-
-def _as_date(v) -> date:
-    return v if isinstance(v, date) else date.fromisoformat(str(v))
-
-
-def load_config(path: str | Path) -> Config:
-    raw = tomllib.loads(Path(path).read_text())
-    n = raw.get("notify", {})
-    return Config(
-        watches=[Watch.from_dict(w) for w in raw.get("watch", [])],
-        ntfy_topic=n.get("ntfy_topic"),
-        ntfy_server=n.get("ntfy_server", "https://ntfy.sh"),
-        poll_minutes=float(raw.get("poll_minutes", 3)),
-        state_file=Path(raw.get("state_file", ".permit-panic-state.json")),
-    )
-
-
-def check(api: RecGov, w: Watch, names_cache: dict[str, dict[str, str]]) -> list[Match]:
+def check(api: RecGov, w: Watch, names: dict[str, str]) -> list[Match]:
     months = months_between(w.earliest, w.latest)
     if w.kind == "campground":
         sites: dict = {}
@@ -81,10 +25,6 @@ def check(api: RecGov, w: Watch, names_cache: dict[str, dict[str, str]]) -> list
             for label, days in api.campground_month(w.entity_id, y, m).items():
                 sites.setdefault(label, {}).update(days)
         return match_campground(sites, w.stay_nights, w.earliest, w.latest, w.sites or None)
-
-    if w.entity_id not in names_cache:
-        names_cache[w.entity_id] = api.permit_divisions(w.entity_id)
-    names = names_cache[w.entity_id]
 
     if w.kind == "entry":
         ids = resolve_divisions(w.trailheads, names)
@@ -101,30 +41,92 @@ def check(api: RecGov, w: Watch, names_cache: dict[str, dict[str, str]]) -> list
     return match_itinerary(per_night, itin, w.earliest, w.latest, names)
 
 
-def run(cfg: Config, once: bool = False) -> None:
-    api = RecGov()
-    names_cache: dict[str, dict[str, str]] = {}
-    seen: dict[str, list[str]] = json.loads(cfg.state_file.read_text()) if cfg.state_file.exists() else {}
-    while True:
+class Watcher:
+    def __init__(self, config_path: str | Path, api: RecGov | None = None):
+        self.config_path = Path(config_path)
+        self.api = api or RecGov()
+        self._content: dict[str, tuple[float, dict]] = {}
+
+    def content(self, permit_id: str) -> dict:
+        hit = self._content.get(permit_id)
+        if not hit or time.monotonic() - hit[0] > CONTENT_TTL:
+            hit = (time.monotonic(), self.api.permit_content(permit_id))
+            self._content[permit_id] = hit
+        return hit[1]
+
+    def names(self, permit_id: str) -> dict[str, str]:
+        return {k: v.get("name", k) for k, v in (self.content(permit_id).get("divisions") or {}).items()}
+
+    def _send(self, cfg: Config, title: str, body: str, **kw) -> None:
+        try:
+            notify.send(title, body, ntfy_topic=cfg.ntfy_topic, ntfy_server=cfg.ntfy_server,
+                        ntfy_token=cfg.ntfy_token, **kw)
+        except OSError as e:
+            print(f"notify failed: {e}", flush=True)
+
+    def cycle(self) -> Config:
+        cfg = load_config(self.config_path)  # re-read so TUI edits apply without a restart
+        state = json.loads(cfg.state_file.read_text()) if cfg.state_file.exists() else {}
+        seen: dict[str, list[str]] = state.get("openings", {})
+        sent: set[str] = set(state.get("reminders_sent", []))
+        status: dict = {"watches": {}, "reminders": []}
+        stamp = lambda: datetime.now().strftime("%H:%M:%S")  # noqa: E731
+
         for w in cfg.watches:
+            if not w.enabled:
+                status["watches"][w.name] = {"disabled": True}
+                continue
             try:
-                matches = check(api, w, names_cache)
-            except (RecGovError, OSError, ValueError) as e:
-                print(f"[{datetime.now():%H:%M:%S}] {w.name}: error: {e}", flush=True)
+                names = {} if w.kind == "campground" else self.names(w.entity_id)
+                matches = check(self.api, w, names)
+            except (RecGovError, OSError, ValueError, KeyError) as e:
+                print(f"[{stamp()}] {w.name}: error: {e}", flush=True)
+                status["watches"][w.name] = {"error": str(e), "checked": datetime.now().isoformat()}
                 continue
             prev = set(seen.get(w.name, []))
             new = [m for m in matches if m.key not in prev]
             # Only remember what is open now, so a site that closes and reopens alerts again.
             seen[w.name] = [m.key for m in matches]
-            print(f"[{datetime.now():%H:%M:%S}] {w.name}: {len(matches)} open, {len(new)} new", flush=True)
+            status["watches"][w.name] = {"open": [m.summary for m in matches], "checked": datetime.now().isoformat()}
+            print(f"[{stamp()}] {w.name}: {len(matches)} open, {len(new)} new", flush=True)
             if new:
                 body = "\n".join(m.summary for m in new[:15])
                 if len(new) > 15:
                     body += f"\n...and {len(new) - 15} more"
-                notify.send(f"Permit Panic: {w.name}", body, ntfy_topic=cfg.ntfy_topic,
-                            ntfy_server=cfg.ntfy_server, click_url=booking_url(w.kind, w.entity_id))
-        cfg.state_file.write_text(json.dumps(seen, indent=1))
-        if once:
-            return
-        # Jitter keeps us from hammering on a fixed beat.
-        time.sleep(cfg.poll_minutes * 60 * random.uniform(0.8, 1.2))
+                self._send(cfg, f"Open: {w.name}", body, click_url=booking_url(w.kind, w.entity_id))
+
+        now = datetime.now(timezone.utc)
+        events: list[Event] = []
+        for r in cfg.reminders:
+            try:
+                events += parse_events(r.permit_id, self.content(r.permit_id))
+            except (RecGovError, OSError, KeyError) as e:
+                print(f"[{stamp()}] reminder {r.name}: error: {e}", flush=True)
+        for key, e, lead in due_alerts(events, now, sent):
+            local = e.when.strftime("%a %b %d %-I:%M %p %Z") + ("" if e.time_known else " (time not listed)")
+            self._send(cfg, f"{describe_lead(lead).capitalize()}: {e.permit_name}", f"{e.description}\n{local}",
+                       click_url=booking_url("permit", e.permit_id), priority="high", tags="alarm_clock")
+            sent.add(key)
+        status["reminders"] = [
+            {"permit": e.permit_name, "when": e.when.isoformat(), "description": e.description,
+             "time_known": e.time_known}
+            for e in events if e.when > now
+        ]
+        status["updated"] = datetime.now().isoformat()
+
+        cfg.state_file.write_text(json.dumps({"openings": seen, "reminders_sent": sorted(sent)}, indent=1))
+        cfg.status_file.write_text(json.dumps(status, indent=1))
+        return cfg
+
+    def run(self, once: bool = False) -> None:
+        while True:
+            try:
+                cfg = self.cycle()
+                minutes = cfg.poll_minutes
+            except (ValueError, KeyError, OSError) as e:  # e.g. a hand-edit broke the config
+                print(f"config error: {e}", flush=True)
+                minutes = 1
+            if once:
+                return
+            # Jitter keeps us from hammering on a fixed beat.
+            time.sleep(minutes * 60 * random.uniform(0.8, 1.2))
