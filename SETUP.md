@@ -17,6 +17,8 @@ About 10 minutes. Do these in order.
 
 ## Server (SSH)
 
+Everything from here runs **on the server**, not your laptop. `ssh` in first. The server does all the watching and sends the notifications, so your laptop can be off.
+
 4. **Install:**
    ```bash
    git clone https://github.com/rhelgason/permit-panic.git ~/permit-panic
@@ -43,7 +45,7 @@ About 10 minutes. Do these in order.
 
 ## Use it
 
-7. `cd ~/permit-panic && .venv/bin/permit-panic tui` → press **a** → search a park → pick it → fill in the form → **Save**. Within seconds your phone shows **✅ Now watching: …**. Press **m** to add lottery and release reminders, and **q** to quit. The watcher keeps running.
+7. Whenever you want to add or change something: `ssh` into the server → `cd ~/permit-panic && .venv/bin/permit-panic tui` → press **a** → search a park → pick it → fill in the form → **Save**. Within seconds your phone shows **✅ Now watching: …**. Press **m** to add lottery and release reminders, and **q** to quit. Then disconnect; the watcher keeps running on the server.
 
 ## Optional
 
