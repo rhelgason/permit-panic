@@ -1,0 +1,63 @@
+# Copy to config.toml. Easiest way to edit it is `permit-panic tui`, which writes this file;
+# the watcher re-reads it every cycle. By hand, find ids with:
+#   permit-panic search grand teton backcountry
+#   permit-panic divisions 4675342 --filter cascade
+#   permit-panic dates 4675342
+
+poll_minutes = 3
+
+[notify]
+# Install the ntfy app (iOS/Android), subscribe to this topic. Pick something unguessable:
+# anyone who knows the topic name can read it.
+ntfy_topic = "permit-panic-CHANGE-ME-1234"
+# If you reserved the topic on an ntfy account, export NTFY_TOKEN=tk_... instead of putting it here.
+# Self-hosting ntfy? ntfy_server = "https://ntfy.example.com"
+# digest_hour = 8                     # daily "still alive" summary, server's local time
+# healthcheck_url = "https://hc-ping.com/your-uuid"   # free dead-man's switch if the server dies
+
+# Release-date / lottery reminders: phone alert 24h and 30 min before each date the
+# permit lists (opening days, lottery windows opening and closing).
+[[reminder]]
+name = "Grand Teton backcountry"
+permit_id = "4675342"
+
+[[reminder]]
+name = "The Wave advanced lottery"
+permit_id = "274309"
+
+# Multi-night route: each entry in `nights` lists acceptable camp zones for that night,
+# by exact name, name fragment, or division id. Alerts only when the WHOLE route is open
+# for your whole group.
+[[watch]]
+name = "Teton Crest Trail"
+kind = "itinerary"
+permit_id = "4675342"
+earliest = 2027-07-15
+latest = 2027-08-31
+group_size = 2
+nights = [
+  ["4675342030"],                            # Death Canyon Shelf (id, to skip the group site)
+  ["Cascade South Fork", "USFS - Alaska Basin"],
+  ["Cascade North Fork"],
+  ["Paintbrush Upper", "Paintbrush Lower"],
+]
+
+# Trailhead entry quota (Inyo / Yosemite style): alerts when >= group_size spots remain.
+[[watch]]
+name = "Inyo - Rush Creek"
+kind = "entry"
+permit_id = "233262"
+earliest = 2027-07-01
+latest = 2027-07-20
+trailheads = ["Rush Creek"]
+group_size = 2
+
+# Regular campground: alerts on any site open for `nights` consecutive nights.
+# [[watch]]
+# name = "Jenny Lake campground"
+# kind = "campground"
+# campground_id = "247664"
+# earliest = 2027-07-10
+# latest = 2027-07-14
+# nights = 2
+# sites = []   # optional site-name filters
