@@ -12,7 +12,7 @@ It handles the three kinds of availability Recreation.gov has:
 
 ## Quick start
 
-Setting up on a server for real? Follow **[SETUP.md](SETUP.md)**, which walks through it step by step.
+Setting up on the server? Follow **[SETUP.md](SETUP.md)**, which walks through it step by step.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
@@ -59,12 +59,11 @@ For every reminder permit, the watcher reads the "important dates" the permit li
 
 ## Phone alerts (Pushover)
 
-You need your Pushover **user key** and an **application API token**. Create a separate "Permit Panic" application (free) rather than reusing another project's token: it gets its own name and the bear icon (`assets/icon-72.png`) on iOS and Android, and you can mute it on its own. Set the keys with `permit-panic set pushover_user …` / `set pushover_token …`, or as `PUSHOVER_USER` / `PUSHOVER_TOKEN` env vars (e.g. in `~/.config/permit-panic.env`, which the systemd unit loads). All your Pushover apps share one 10,000-messages-a-month free allowance; this one uses a handful a day.
+You need your Pushover **user key** and an **application API token**. Create a separate "Permit Panic" application (free) rather than reusing another project's token: it gets its own name and the bear icon (`assets/icon-72.png`) on iOS and Android, and you can mute it on its own. Set the keys with `permit-panic set pushover_user …` / `set pushover_token …`, or as `PUSHOVER_USER` / `PUSHOVER_TOKEN` env vars (on the server they live in `/etc/permit-panic.env`, which the service loads). All your Pushover apps share one 10,000-messages-a-month free allowance; this one uses a handful a day.
 
-## Running it 24/7 for free
+## Running it 24/7
 
-- **Your own server (recommended):** clone the repo there, then follow `deploy/permit-panic.service` (a systemd user service). Check logs with `journalctl --user -u permit-panic -f`.
-- GitHub Actions cron also works, with limits: it runs every ≥5 minutes, often late. State would have to live in the Actions cache, and changing watches would mean committing `config.toml`. Use it only as a fallback.
+It runs on the same always-on DigitalOcean droplet as Kalshi Desk, as its own `permit` user with a systemd service. To install or reinstall it from your Mac, run `deploy/install-on-server.sh`. For day-to-day use, `panic tui` / `panic update` (an alias for `ssh -t root@104.131.18.118 permit-panic`). The details are in [deploy/SERVER.md](deploy/SERVER.md).
 
 ## How it behaves
 

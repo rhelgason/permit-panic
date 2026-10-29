@@ -1,20 +1,18 @@
-# systemd user service. Install:
-#   mkdir -p ~/.config/systemd/user && cp deploy/permit-panic.service ~/.config/systemd/user/
-#   # optional: keep Pushover keys out of config.toml
-#   #   printf 'PUSHOVER_USER=u...\nPUSHOVER_TOKEN=a...\n' > ~/.config/permit-panic.env
-#   systemctl --user daemon-reload && systemctl --user enable --now permit-panic
-#   loginctl enable-linger $USER     # keep running after you log out
-#   journalctl --user -u permit-panic -f
+# Installed to /etc/systemd/system/ by deploy/install-on-server.sh (deploy/SERVER.md).
 [Unit]
-Description=Permit Panic watcher
+Description=Permit Panic: Recreation.gov permit watcher (deploy/SERVER.md)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
-WorkingDirectory=%h/permit-panic
-EnvironmentFile=-%h/.config/permit-panic.env
-ExecStart=%h/permit-panic/.venv/bin/permit-panic watch config.toml
+User=permit
+WorkingDirectory=/home/permit/permit-panic
+EnvironmentFile=/etc/permit-panic.env
+ExecStart=/home/permit/permit-panic/.venv/bin/permit-panic watch config.toml
 Restart=always
 RestartSec=30
+# Shares a 1 GB droplet with Kalshi Desk
+MemoryMax=200M
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

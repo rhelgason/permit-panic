@@ -1,60 +1,42 @@
 # Setup checklist
 
-About 10 minutes. Do these in order.
+You've already done steps 1–6: the icon, the Pushover app, and installing on your Mac with your keys set.
+Everything below moves Permit Panic onto the server (the DigitalOcean droplet Kalshi Desk uses). Once it's there,
+your Mac can be off. Server details are in [deploy/SERVER.md](deploy/SERVER.md).
 
-## GitHub
+## Move it to the server (on your Mac)
 
-1. **Download the icon.** Open `assets/icon-72.png` in the repo → click the **Download raw file** button (↓, top right of the file view).
-
-## Pushover (browser)
-
-2. **Create the app.** At pushover.net, log in → scroll to **Your Applications** → **Create an Application/API Token** → fill in:
-   - *Name*: `Permit Panic`
-   - *Type*: **Application**
-   - *Icon*: **Choose File** → the `icon-72.png` from step 1
-   - Tick the terms box → **Create Application**
-3. **Copy two keys.** On the new app's page, copy the **API Token/Key** (starts with `a`). Then go back to the dashboard and copy **Your User Key** (top right, starts with `u`).
-
-## Server (SSH)
-
-Everything from here runs **on the server**, not your laptop. `ssh` in first. The server does all the watching and sends the notifications, so your laptop can be off.
-
-4. **Install:**
+7. **Get the latest code:**
    ```bash
-   git clone https://github.com/rhelgason/permit-panic.git ~/permit-panic
-   cd ~/permit-panic
-   python3 -m venv .venv && .venv/bin/pip install -e .
+   cd ~/Documents/permit-panic && git pull
    ```
-   This needs Python 3.11+ (check with `python3 --version`).
-5. **Add your keys and test.** Paste in your keys from step 3:
+8. **(Optional) Rotate the Pushover token**, since it was pasted into a chat. On pushover.net, open your **Permit Panic** app → **Reset Token** → copy the new token. Then run:
    ```bash
-   .venv/bin/permit-panic set pushover_user uYOUR_USER_KEY
-   .venv/bin/permit-panic set pushover_token aYOUR_APP_TOKEN
-   .venv/bin/permit-panic set digest_hour 8      # optional daily summary at 8am, server time
-   chmod 600 config.toml
-   .venv/bin/permit-panic test-notify
+   .venv/bin/permit-panic set pushover_token aNEW_TOKEN
    ```
-   Your phone should get **🐻 Permit Panic test** with the bear icon. If it doesn't, the command prints Pushover's reason.
-6. **Run it 24/7:**
+9. **Install on the server.** One command does everything, and your keys are copied without being printed:
    ```bash
-   mkdir -p ~/.config/systemd/user && cp deploy/permit-panic.service ~/.config/systemd/user/
-   systemctl --user daemon-reload && systemctl --user enable --now permit-panic
-   sudo loginctl enable-linger $USER
+   deploy/install-on-server.sh
    ```
-   Check it with `systemctl --user status permit-panic`. It should say **active (running)**.
+   It ends with **==> Test notification sent**, and your phone gets **🐻 Permit Panic test**.
+10. **Add a shortcut.** After this, `panic <command>` runs on the server:
+    ```bash
+    echo "alias panic='ssh -t root@104.131.18.118 permit-panic'" >> ~/.zshrc && source ~/.zshrc
+    ```
+11. **Clean up the Mac copy.** Its `config.toml` holds your keys, and the server has everything now:
+    ```bash
+    cd ~ && rm -rf ~/Documents/permit-panic
+    ```
 
 ## Use it
 
-7. Whenever you want to add or change something: `ssh` into the server → `cd ~/permit-panic && .venv/bin/permit-panic tui` → press **a** → search a park → pick it → fill in the form → **Save**. Within seconds your phone shows **✅ Now watching: …**. Press **m** to add lottery and release reminders, and **q** to quit. Then disconnect; the watcher keeps running on the server.
+12. Run `panic tui` → press **a** → search a park → pick it → fill in the form → **Save**. Within seconds your phone shows **✅ Now watching: …**. Press **m** to add lottery and release reminders, and **q** to quit. The server keeps watching.
+13. To get new code later, run `panic update`.
 
 ## Optional
 
-8. **Ring until acknowledged.** Run `.venv/bin/permit-panic set emergency_openings true` so openings repeat every minute until you tap Acknowledge.
-9. **Get alerted if the server dies.**
+14. **Ring until acknowledged:** `panic set emergency_openings true` makes openings repeat every minute until you tap Acknowledge.
+15. **Get alerted if the server dies:**
     - Go to healthchecks.io → **Sign up** (free) → **Add Check** → set *Period* 10 min and *Grace* 10 min → **Save** → copy the ping URL.
-    - Then go to **Integrations** → **Pushover** → **Add Integration** → **Subscribe with Pushover**.
-    - On the server, run:
-      ```bash
-      .venv/bin/permit-panic set healthcheck_url https://hc-ping.com/YOUR-UUID
-      ```
-    No restart is needed.
+    - Go to **Integrations** → **Pushover** → **Add Integration**.
+    - Run `panic set healthcheck_url https://hc-ping.com/YOUR-UUID`.
