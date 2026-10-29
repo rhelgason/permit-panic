@@ -25,12 +25,29 @@ cp examples/road-trip.toml config.toml   # set your ntfy topic
 | key     | does                                                                          |
 |---------|-------------------------------------------------------------------------------|
 | `a`     | add a watch: search a park → pick zones per night / trailheads → set dates    |
+| `e`     | edit the highlighted watch (dates, group size, route, trailheads)             |
 | `m`     | add release + lottery reminders for a permit                                  |
 | `space` | pause/resume a watch                                                          |
 | `d`     | delete the highlighted watch or reminder                                      |
+| `x`     | mute the highlighted reminder date                                            |
 | `r`     | refresh                                                                       |
 
-The dashboard edits `config.toml`, which the watcher re-reads every cycle, so changes apply without a restart. Run both on the same machine and use SSH for the dashboard.
+The dashboard edits `config.toml`. The watcher notices the change within seconds, runs the new watch, and sends a quiet "Now watching" ping to your phone. That ping proves the whole chain works: the config saved, the watcher is alive, Recreation.gov answered, and ntfy delivered. Run both on the same machine and use SSH for the dashboard.
+
+## Notifications
+
+| priority | title                              | when                                                                         |
+|----------|------------------------------------|------------------------------------------------------------------------------|
+| urgent   | **Open: _watch_**                  | new openings, collapsed per route (`Start Dec 01-19: A -> B`), **Book now** button |
+| high     | **In 30 min: _permit_**            | a reservation opening / lottery date is about to start                       |
+| default  | **Tomorrow: _permit_**             | the same, 24 hours ahead                                                     |
+| default  | **Problem with / Watch broken**    | a just-saved watch fails its first check, or a watch keeps failing for 30 min |
+| low      | **Now watching / Updated / Resumed** | the watcher loaded your new or edited watch, with its first result          |
+| low      | **Reminders on: _permit_**         | reminders added, with the next date                                          |
+| low      | **Fixed / Paused / Stopped / Ended** | recovered, paused, deleted, or the date window passed                     |
+| min      | **Daily summary**                  | optional: set `[notify] digest_hour = 8` (the server's local time)           |
+
+To know if the server itself dies, create a free check at [healthchecks.io](https://healthchecks.io) and set `[notify] healthcheck_url`. The watcher pings it every cycle, and healthchecks.io alerts you (it supports ntfy) if the pings stop.
 
 ## Reminders
 
@@ -51,10 +68,19 @@ Set `ntfy_topic` in `config.toml`. You can reuse the topic you already use for a
 - By default it polls every ~3 minutes with jitter and spaces out requests by 1s.
 - It alerts only on *new* openings. If something closes and later reopens, you get alerted again.
 
+## How itinerary availability is decided
+
+Each zone's month calendar returns `bools` and `quota_type_maps`. These were tested live on Joshua Tree, Zion, Canyonlands, Everglades and Death Valley in Oct 2026 (~3,800 zone-nights):
+
+- `bools` is also `true` for **walk-up-only** zones (`total: 0`), which can't be booked online. That accounted for all 527 mismatches.
+- With walk-up zones excluded, `bools` matched `remaining > 0` on every zone-night.
+- So a zone-night counts as open only when every quota has `total > 0` and enough `remaining`. `ConstantQuotaUsageDaily` counts sites (needs ≥ 1); `QuotaUsageByMemberDaily` counts people (needs ≥ your group size).
+
 ## Known gaps / TODO
 
-- `itinerary` availability is read from the per-zone `bools` calendar. The meaning `true = open` has not yet been confirmed during an in-season release.
-- Editing an existing watch in the dashboard (today: delete and re-add).
-- Per-reminder muting; busy permits like The Wave list a date every month.
 - Non-Recreation.gov systems (state parks, Parks Canada).
 - Trip-wide view across several parks on a road trip.
+
+## Future ideas
+
+- **Simple website UI.** A read-only page served from the same server, showing watches, current openings and upcoming reminders, with editing added later. It would read the same `config.toml` and status file the TUI uses, so it can sit alongside the TUI without a rewrite.

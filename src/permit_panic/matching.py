@@ -12,7 +12,35 @@ from datetime import date, timedelta
 @dataclass(frozen=True)
 class Match:
     key: str  # stable id used to avoid re-alerting on the same opening
-    summary: str
+    day: date  # entry / first night
+    detail: str  # what is open that day
+
+    @property
+    def summary(self) -> str:
+        return f"{self.day:%a %b %d}: {self.detail}"
+
+
+def summarize(matches: list[Match], limit: int = 12) -> str:
+    """Phone-sized text: the same option on consecutive days collapses to one line.
+
+    "Dec 01-15, Dec 17: La Verkin Creek 2 -> Hop Valley A" instead of 16 lines.
+    """
+    by_detail: dict[str, list[date]] = {}
+    for m in matches:
+        by_detail.setdefault(m.detail, []).append(m.day)
+    lines = []
+    for detail, days in by_detail.items():
+        days = sorted(set(days))
+        spans, start = [], days[0]
+        for prev, cur in zip(days, days[1:] + [None]):
+            if cur is None or cur - prev > timedelta(days=1):
+                spans.append(f"{start:%b %d}" if start == prev else f"{start:%b %d}-{prev:%d}"
+                             if start.month == prev.month else f"{start:%b %d}-{prev:%b %d}")
+                start = cur
+        lines.append(f"{', '.join(spans)}: {detail}")
+    if len(lines) > limit:
+        lines = lines[:limit] + [f"...and {len(lines) - limit} more options"]
+    return "\n".join(lines)
 
 
 def daterange(start: date, end: date):
@@ -34,8 +62,11 @@ def resolve_divisions(patterns: list[str], divisions: dict[str, str]) -> list[st
     """Resolve ids or case-insensitive name fragments to division ids, preserving order."""
     ids: list[str] = []
     for pat in patterns:
+        exact = [k for k, name in divisions.items() if name.lower() == pat.lower()]
         if pat in divisions:
             found = [pat]
+        elif exact:
+            found = exact  # "La Verkin Creek 1" must not also pick up "La Verkin Creek 11"
         else:
             found = [k for k, name in divisions.items() if pat.lower() in name.lower()]
         if not found:
@@ -70,7 +101,7 @@ def match_itinerary(
         else:
             route = " -> ".join(" / ".join(names.get(d, d) for d in opts) for opts in plan)
             key = f"{start.isoformat()}|" + ";".join(",".join(opts) for opts in plan)
-            matches.append(Match(key, f"{start:%a %b %d}: {route}"))
+            matches.append(Match(key, start, route))
     return matches
 
 
@@ -87,9 +118,9 @@ def match_entry(
         for div in division_ids:
             remaining = avail.get(day, {}).get(div, 0)
             if remaining >= group_size:
-                # Recreation.gov reports 900000 for days with no quota (off-season).
-                left = "no quota" if remaining >= 100_000 else f"{remaining} left"
-                matches.append(Match(f"{day.isoformat()}|{div}", f"{day:%a %b %d}: {names.get(div, div)} ({left})"))
+                # Recreation.gov reports 900000 for days with no quota (off-season, often no permit needed).
+                note = " (no quota)" if remaining >= 100_000 else ""
+                matches.append(Match(f"{day.isoformat()}|{div}", day, f"{names.get(div, div)}{note}"))
     return matches
 
 
@@ -107,5 +138,5 @@ def match_campground(
             continue
         for start in daterange(earliest, last_start):
             if all(days.get(start + timedelta(days=i)) for i in range(nights)):
-                matches.append(Match(f"{start.isoformat()}|{label}", f"{start:%a %b %d} x{nights}: site {label}"))
+                matches.append(Match(f"{start.isoformat()}|{label}", start, f"site {label}, {nights} nights"))
     return matches

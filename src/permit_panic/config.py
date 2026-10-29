@@ -26,7 +26,7 @@ class Watch:
     latest: date
     nights: list[list[str]] = field(default_factory=list)  # itinerary
     trailheads: list[str] = field(default_factory=list)  # entry
-    group_size: int = 1  # entry
+    group_size: int = 1  # entry, itinerary
     stay_nights: int = 1  # campground
     sites: list[str] = field(default_factory=list)  # campground
     enabled: bool = True
@@ -63,6 +63,7 @@ class Watch:
 class Reminder:
     name: str
     permit_id: str
+    ignore: list[str] = field(default_factory=list)  # mute dates whose description contains any of these
 
 
 @dataclass
@@ -72,6 +73,8 @@ class Config:
     ntfy_topic: str | None = None
     ntfy_server: str = "https://ntfy.sh"
     ntfy_token: str | None = None
+    digest_hour: int | None = None  # local hour for a daily "still alive" summary
+    healthcheck_url: str | None = None  # pinged every cycle; e.g. a free healthchecks.io check
     poll_minutes: float = 3.0
     state_file: Path = Path(".permit-panic-state.json")
     status_file: Path = Path(".permit-panic-status.json")
@@ -103,11 +106,14 @@ def parse(raw: dict, path: Path) -> Config:
 
     return Config(
         watches=[Watch.from_dict(w) for w in raw.get("watch", [])],
-        reminders=[Reminder(r.get("name", str(r["permit_id"])), str(r["permit_id"])) for r in raw.get("reminder", [])],
+        reminders=[Reminder(r.get("name", str(r["permit_id"])), str(r["permit_id"]), [str(i) for i in r.get("ignore", [])])
+                   for r in raw.get("reminder", [])],
         ntfy_topic=n.get("ntfy_topic"),
         ntfy_server=n.get("ntfy_server", "https://ntfy.sh"),
         # Prefer the env var so an access token never has to sit in the config file.
         ntfy_token=os.environ.get("NTFY_TOKEN") or n.get("ntfy_token"),
+        digest_hour=int(n["digest_hour"]) if "digest_hour" in n else None,
+        healthcheck_url=n.get("healthcheck_url"),
         poll_minutes=float(raw.get("poll_minutes", 3)),
         state_file=rel(raw.get("state_file", ".permit-panic-state.json")),
         status_file=rel(raw.get("status_file", ".permit-panic-status.json")),

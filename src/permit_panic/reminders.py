@@ -65,6 +65,10 @@ def parse_events(permit_id: str, payload: dict) -> list[Event]:
     return sorted(events, key=lambda e: e.when)
 
 
+def visible(events: list[Event], ignore: list[str]) -> list[Event]:
+    return [e for e in events if not any(i.lower() in e.description.lower() for i in ignore)]
+
+
 def due_alerts(events: list[Event], now: datetime, sent: set[str]) -> list[tuple[str, Event, timedelta]]:
     """(key, event, lead) for each reminder whose send time has passed but whose event hasn't."""
     out = []

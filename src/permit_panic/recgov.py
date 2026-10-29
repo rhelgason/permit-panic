@@ -98,12 +98,13 @@ class RecGov:
 
     # --- availability ----------------------------------------------------
 
-    def itinerary_month(self, permit_id: str, division_id: str, year: int, month: int) -> dict[date, bool]:
+    def itinerary_month(self, permit_id: str, division_id: str, year: int, month: int,
+                        group_size: int = 1) -> dict[date, bool]:
         payload = self._get(
             f"/api/permititinerary/{permit_id}/division/{division_id}/availability/month",
             {"month": month, "year": year},
         )["payload"]
-        return parse_itinerary(payload)
+        return parse_itinerary(payload, group_size)
 
     def entry_month(self, permit_id: str, year: int, month: int) -> dict[date, dict[str, int]]:
         # This endpoint only accepts exact first/last-of-month bounds.
@@ -126,8 +127,29 @@ class RecGov:
 # --- parsers (pure; covered by tests) -------------------------------------
 
 
-def parse_itinerary(payload: dict) -> dict[date, bool]:
-    return {date.fromisoformat(d): bool(v) for d, v in (payload.get("bools") or {}).items()}
+def parse_itinerary(payload: dict, group_size: int = 1) -> dict[date, bool]:
+    """date -> can this zone be booked online for this group that night.
+
+    `bools` alone is not enough: it is also true for walk-up-only zones, which
+    have no online quota (total 0). Verified live against Joshua Tree, Zion,
+    Canyonlands, Everglades and Death Valley: once walk-up zones are excluded,
+    `bools` matches remaining > 0 exactly. So we use the quota counts, which also
+    let us check group size: ConstantQuotaUsageDaily counts sites/groups and
+    QuotaUsageByMemberDaily counts people.
+    """
+    quotas = payload.get("quota_type_maps") or {}
+    out = {}
+    for d, flag in (payload.get("bools") or {}).items():
+        cells = {kind: days[d] for kind, days in quotas.items() if d in days}
+        if not cells:
+            out[date.fromisoformat(d)] = bool(flag)
+            continue
+        out[date.fromisoformat(d)] = all(
+            c.get("total", 0) > 0
+            and c.get("remaining", 0) >= (group_size if kind == "QuotaUsageByMemberDaily" else 1)
+            for kind, c in cells.items()
+        )
+    return out
 
 
 def parse_entry(payload: dict) -> dict[date, dict[str, int]]:

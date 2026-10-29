@@ -7,7 +7,7 @@ import urllib.request
 
 def send(title: str, body: str, *, ntfy_topic: str | None, click_url: str | None = None,
          ntfy_server: str = "https://ntfy.sh", ntfy_token: str | None = None,
-         priority: str = "urgent", tags: str = "tent,rotating_light") -> None:
+         priority: str = "urgent", tags: str = "tent,rotating_light", action: str = "Open") -> None:
     print(f"\n*** {title}\n{body}\n{click_url or ''}", flush=True)
     if not ntfy_topic:
         return
@@ -16,7 +16,7 @@ def send(title: str, body: str, *, ntfy_topic: str | None, click_url: str | None
         headers["Authorization"] = f"Bearer {ntfy_token}"
     if click_url:
         headers["Click"] = click_url
-        headers["Actions"] = f"view, Open, {click_url}"
+        headers["Actions"] = f"view, {action}, {click_url}"
     req = urllib.request.Request(f"{ntfy_server.rstrip('/')}/{ntfy_topic}", data=body.encode("utf-8"),
                                  headers=headers, method="POST")
     urllib.request.urlopen(req, timeout=15).close()

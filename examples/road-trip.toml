@@ -12,6 +12,8 @@ poll_minutes = 3
 ntfy_topic = "permit-panic-CHANGE-ME-1234"
 # If you reserved the topic on an ntfy account, export NTFY_TOKEN=tk_... instead of putting it here.
 # Self-hosting ntfy? ntfy_server = "https://ntfy.example.com"
+# digest_hour = 8                     # daily "still alive" summary, server's local time
+# healthcheck_url = "https://hc-ping.com/your-uuid"   # free dead-man's switch if the server dies
 
 # Release-date / lottery reminders: phone alert 24h and 30 min before each date the
 # permit lists (opening days, lottery windows opening and closing).
@@ -24,13 +26,15 @@ name = "The Wave advanced lottery"
 permit_id = "274309"
 
 # Multi-night route: each entry in `nights` lists acceptable camp zones for that night,
-# by name fragment or division id. Alerts only when the WHOLE route is open.
+# by exact name, name fragment, or division id. Alerts only when the WHOLE route is open
+# for your whole group.
 [[watch]]
 name = "Teton Crest Trail"
 kind = "itinerary"
 permit_id = "4675342"
 earliest = 2027-07-15
 latest = 2027-08-31
+group_size = 2
 nights = [
   ["4675342030"],                            # Death Canyon Shelf (id, to skip the group site)
   ["Cascade South Fork", "USFS - Alaska Basin"],

@@ -20,8 +20,9 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from .config import Watch, load_config, read_raw, write_raw
+from .matching import resolve_divisions
 from .recgov import RecGov, RecGovError, SearchResult
-from .reminders import parse_events
+from .reminders import parse_events, visible
 
 BOOKABLE = ("permit", "campground")
 
@@ -75,30 +76,48 @@ class SearchScreen(ModalScreen[SearchResult | None]):
 
 
 class WatchForm(ModalScreen[dict | None]):
-    """Fill in dates and pick zones/trailheads for a new watch."""
+    """Fill in dates and pick zones/trailheads for a new watch, or edit an existing one."""
 
     BINDINGS = [("escape", "dismiss(None)", "Cancel")]
 
-    def __init__(self, result: SearchResult, kind: str, divisions: dict[str, str]):
+    def __init__(self, result: SearchResult, kind: str, divisions: dict[str, str], existing: Watch | None = None):
         super().__init__()
-        self.result, self.kind, self.divisions = result, kind, divisions
+        self.result, self.kind, self.divisions, self.existing = result, kind, divisions, existing
         self.selected: set[str] = set()
         self.nights: list[list[str]] = []
+        if existing:
+            # Hand-written configs may use name fragments; turn them back into ids so the boxes tick.
+            resolve = lambda pats: self._resolve(pats)  # noqa: E731
+            self.nights = [resolve(n) for n in existing.nights]
+            self.selected = set(resolve(existing.trailheads))
+
+    def _resolve(self, patterns: list[str]) -> list[str]:
+        try:
+            return resolve_divisions(patterns, self.divisions)
+        except ValueError:
+            return [p for p in patterns if p in self.divisions]
 
     def compose(self) -> ComposeResult:
         nxt = date.today().replace(year=date.today().year + 1)
+        e = self.existing
         with VerticalScroll(classes="dialog wide"):
-            yield Label(f"New {self.kind} watch: {self.result.name}", classes="title")
+            verb = "Edit" if e else "New"
+            yield Label(f"{verb} {self.kind} watch: {self.result.name}", classes="title")
             with Horizontal(classes="row"):
-                yield Input(self.result.name, placeholder="name", id="name")
-                yield Input(f"{nxt:%Y}-07-01", placeholder="earliest YYYY-MM-DD", id="earliest")
-                yield Input(f"{nxt:%Y}-08-31", placeholder="latest YYYY-MM-DD", id="latest")
-            if self.kind == "entry":
-                yield Input("2", placeholder="group size", id="group_size")
+                yield Input(e.name if e else self.result.name, placeholder="name", id="name")
+                yield Input(e.earliest.isoformat() if e else f"{nxt:%Y}-07-01", placeholder="earliest YYYY-MM-DD",
+                            id="earliest")
+                yield Input(e.latest.isoformat() if e else f"{nxt:%Y}-08-31", placeholder="latest YYYY-MM-DD",
+                            id="latest")
+            if self.kind in ("entry", "itinerary"):
+                with Horizontal(classes="row"):
+                    yield Label("Group size ", classes="hint")
+                    yield Input(str(e.group_size if e else 2), placeholder="people", id="group_size")
             if self.kind == "campground":
                 with Horizontal(classes="row"):
-                    yield Input("2", placeholder="consecutive nights", id="stay")
-                    yield Input("", placeholder="site filter, comma separated (optional)", id="sites")
+                    yield Input(str(e.stay_nights if e else 2), placeholder="consecutive nights", id="stay")
+                    yield Input(", ".join(e.sites) if e else "", placeholder="site filter, comma separated (optional)",
+                                id="sites")
             if self.divisions:
                 what = "camp zones" if self.kind == "itinerary" else "trailheads"
                 yield Input(placeholder=f"filter {len(self.divisions)} {what}…", id="filter")
@@ -109,7 +128,7 @@ class WatchForm(ModalScreen[dict | None]):
                 with Horizontal(classes="row"):
                     yield Button("Add night", id="add_night")
                     yield Button("Undo night", id="undo_night")
-                yield Static("Route: (no nights yet)", id="route")
+                yield Static(self._route_text(), id="route")
             yield Label("", id="error", classes="error")
             with Horizontal(classes="row"):
                 yield Button("Save", variant="primary", id="save")
@@ -135,9 +154,12 @@ class WatchForm(ModalScreen[dict | None]):
         self.selected.clear()
         self.query_one("#divs", SelectionList).deselect_all()
 
+    def _route_text(self) -> str:
+        lines = [f"Night {i + 1}: " + " / ".join(self.divisions.get(d, d) for d in n) for i, n in enumerate(self.nights)]
+        return "Route:\n" + ("\n".join(lines) or "(no nights yet)")
+
     def _show_route(self) -> None:
-        lines = [f"Night {i + 1}: " + " / ".join(self.divisions[d] for d in n) for i, n in enumerate(self.nights)]
-        self.query_one("#route", Static).update("Route:\n" + ("\n".join(lines) or "(no nights yet)"))
+        self.query_one("#route", Static).update(self._route_text())
 
     @on(Button.Pressed, "#add_night")
     def add_night(self) -> None:
@@ -167,12 +189,15 @@ class WatchForm(ModalScreen[dict | None]):
             d["earliest"], d["latest"] = date.fromisoformat(d["earliest"]), date.fromisoformat(d["latest"])
             if self.kind == "itinerary":
                 d["nights"] = self.nights
+                d["group_size"] = int(val("group_size"))
             elif self.kind == "entry":
                 d["trailheads"] = sorted(self.selected)
                 d["group_size"] = int(val("group_size"))
             else:
                 d["nights"] = int(val("stay"))
                 d["sites"] = [s.strip() for s in val("sites").split(",") if s.strip()]
+            if self.existing and not self.existing.enabled:
+                d["enabled"] = False  # editing doesn't silently resume a paused watch
             Watch.from_dict(d)
         except (ValueError, KeyError) as e:
             self.query_one("#error", Label).update(str(e))
@@ -191,15 +216,18 @@ class PermitPanicApp(App):
     .error { color: $error; }
     .row { height: auto; }
     .row Input { width: 1fr; }
+    .row Label { padding: 1 0; }
     #results { height: 15; }
     #divs { height: 10; }
     #detail { height: auto; max-height: 12; border-top: solid $accent; padding: 0 1; }
     """
     BINDINGS = [
         ("a", "add_watch", "Add watch"),
+        ("e", "edit", "Edit"),
         ("m", "add_reminder", "Add reminder"),
         ("space", "toggle", "On/off"),
         ("d", "delete", "Delete"),
+        ("x", "mute", "Mute date"),
         ("r", "refresh", "Refresh"),
         ("q", "quit", "Quit"),
     ]
@@ -209,7 +237,7 @@ class PermitPanicApp(App):
         self.config_path = Path(config_path)
         self.api = api or RecGov(min_interval=0.3)
         self.status: dict = {}
-        self.reminder_rows: list[str] = []  # permit id per reminders-table row
+        self.reminder_rows: list[tuple[str, str | None]] = []  # (permit id, description) per reminders row
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -240,7 +268,9 @@ class PermitPanicApp(App):
         table.clear()
         for w in cfg.watches:
             s = self.status.get("watches", {}).get(w.name, {})
-            if not w.enabled:
+            if w.latest < date.today():
+                state = "ended"
+            elif not w.enabled:
                 state = "paused"
             elif "error" in s:
                 state = "error"
@@ -271,27 +301,30 @@ class PermitPanicApp(App):
 
     @work(thread=True, exclusive=True, group="reminders")
     def refresh_reminders(self) -> None:
-        rows: list[tuple[datetime, str, str, str]] = []
+        rows: list[tuple[datetime, str, str, str, str | None]] = []
         now = datetime.now(timezone.utc)
         for r in load_config(self.config_path).reminders:
             try:
-                events = parse_events(r.permit_id, self.api.permit_content(r.permit_id))
+                events = visible(parse_events(r.permit_id, self.api.permit_content(r.permit_id)), r.ignore)
             except (RecGovError, OSError, KeyError) as e:
-                rows.append((now, r.permit_id, r.name, f"error: {e}"))
+                rows.append((now, r.permit_id, r.name, f"error: {e}", None))
                 continue
             upcoming = [e for e in events if e.when > now]
             for e in upcoming:
-                rows.append((e.when, r.permit_id, r.name, e.description + ("" if e.time_known else " (time ?)")))
+                rows.append((e.when, r.permit_id, r.name, e.description + ("" if e.time_known else " (time ?)"),
+                             e.description))
             if not upcoming:
-                rows.append((now, r.permit_id, r.name, "No upcoming dates posted yet (checks again every few hours)"))
+                muted = f" ({len(r.ignore)} muted)" if r.ignore else ""
+                rows.append((now, r.permit_id, r.name,
+                             f"No upcoming dates posted yet{muted} (checks again every few hours)", None))
         rows.sort(key=lambda x: x[0])
         self.call_from_thread(self._fill_reminders, rows)
 
     def _fill_reminders(self, rows) -> None:
         table = self.query_one("#reminders", DataTable)
         table.clear()
-        self.reminder_rows = [r[1] for r in rows]
-        for when, _, name, what in rows:
+        self.reminder_rows = [(r[1], r[4]) for r in rows]
+        for when, _, name, what, _ in rows:
             table.add_row(when.strftime("%a %b %d %Y %-I:%M %p %Z"), name[:40], what if len(what) < 90 else what[:87] + "…")
 
     # --- actions -----------------------------------------------------------
@@ -332,14 +365,66 @@ class PermitPanicApp(App):
             return
         self.call_from_thread(self.push_screen, WatchForm(result, kind, divisions), self._save_watch)
 
-    def _save_watch(self, d: dict | None) -> None:
+    def _save_watch(self, d: dict | None, replacing: str | None = None) -> None:
         if not d:
             return
-        names = {w.get("name") for w in read_raw(self.config_path).get("watch", [])}
+        names = {w.get("name") for w in read_raw(self.config_path).get("watch", [])} - {replacing}
         if d["name"] in names:
             d["name"] += f" ({d['earliest']:%b %d})"
-        self._edit(lambda raw: raw.setdefault("watch", []).append(d))
-        self.notify(f"Watching {d['name']}. The watcher picks it up on its next cycle.")
+
+        def apply(raw):
+            watches = raw.setdefault("watch", [])
+            idx = next((i for i, w in enumerate(watches) if w.get("name") == replacing), None)
+            if idx is None:
+                watches.append(d)
+            else:
+                watches[idx] = d  # keep its place in the list
+        self._edit(apply)
+        ping = " Your phone gets a confirmation once the watcher has run it." if self._has_topic() else ""
+        self.notify(f"Saved {d['name']}.{ping}")
+
+    def _has_topic(self) -> bool:
+        try:
+            return bool(load_config(self.config_path).ntfy_topic)
+        except (ValueError, KeyError, OSError):
+            return False
+
+    def action_edit(self) -> None:
+        if not self._on_watches_tab():
+            return
+        name = self._current_watch()
+        w = next((w for w in load_config(self.config_path).watches if w.name == name), None)
+        if w:
+            self.notify(f"Loading {w.name}…")
+            self._load_and_edit(w)
+
+    @work(thread=True)
+    def _load_and_edit(self, w: Watch) -> None:
+        result = SearchResult("campground" if w.kind == "campground" else "permit", w.entity_id, w.name, "")
+        try:
+            divisions = {} if w.kind == "campground" else self.api.permit_divisions(w.entity_id)
+        except (RecGovError, OSError) as e:
+            self.call_from_thread(self.notify, str(e), severity="error")
+            return
+        self.call_from_thread(self.push_screen, WatchForm(result, w.kind, divisions, existing=w),
+                              lambda d: self._save_watch(d, replacing=w.name))
+
+    def action_mute(self) -> None:
+        if self._on_watches_tab():
+            return
+        table = self.query_one("#reminders", DataTable)
+        if not table.row_count:
+            return
+        pid, desc = self.reminder_rows[table.cursor_row]
+        if not desc:
+            return
+
+        def mute(raw):
+            for r in raw.get("reminder", []):
+                if str(r.get("permit_id")) == pid:
+                    r.setdefault("ignore", []).append(desc)
+        self._edit(mute)
+        self.notify(f"Muted: {desc[:60]}")
 
     def action_add_reminder(self) -> None:
         self.push_screen(SearchScreen(self.api, "Add release/lottery reminders for a permit", permits_only=True),
@@ -371,7 +456,7 @@ class PermitPanicApp(App):
         else:
             table = self.query_one("#reminders", DataTable)
             if table.row_count:
-                pid = self.reminder_rows[table.cursor_row]
+                pid = self.reminder_rows[table.cursor_row][0]
                 self._edit(lambda raw: raw.__setitem__(
                     "reminder", [r for r in raw.get("reminder", []) if str(r.get("permit_id")) != pid]))
 

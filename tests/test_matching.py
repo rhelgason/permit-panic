@@ -69,3 +69,18 @@ def test_campground_consecutive_nights():
 
 def test_months_between_crosses_year():
     assert months_between(D(2026, 12, 5), D(2027, 2, 1)) == [(2026, 12), (2027, 1), (2027, 2)]
+
+
+def test_exact_name_beats_fragment():
+    divs = {"1": "La Verkin Creek 1", "11": "La Verkin Creek 11", "2": "La Verkin Creek 2"}
+    assert resolve_divisions(["la verkin creek 1"], divs) == ["1"]
+    assert resolve_divisions(["La Verkin"], divs) == ["1", "11", "2"]
+
+
+def test_summarize_collapses_consecutive_days():
+    from permit_panic.matching import Match, summarize
+
+    ms = [Match(f"k{d}", D(2026, 12, d), "A -> B") for d in (1, 2, 3, 5, 30, 31)]
+    ms += [Match("x", D(2027, 1, 1), "A -> B"), Match("y", D(2026, 12, 2), "C")]
+    assert summarize(ms) == "Dec 01-03, Dec 05, Dec 30-Jan 01: A -> B\nDec 02: C"
+    assert summarize(ms, limit=1).endswith("...and 1 more options")
