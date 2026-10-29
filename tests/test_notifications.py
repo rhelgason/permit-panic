@@ -190,3 +190,36 @@ def test_daily_digest_once_per_day(tmp_path, sent):
     w.cycle(at)
     w.cycle(at + timedelta(minutes=29))
     assert [t for t, _ in sent] == ["Permit Panic daily summary"]
+
+
+def test_send_sets_icon_emoji_and_button(monkeypatch):
+    import urllib.request as ur
+
+    captured = {}
+
+    class Resp:
+        def close(self):
+            pass
+
+    def fake_urlopen(req, timeout=None):
+        captured.update(req.headers, url=req.full_url)
+        return Resp()
+
+    monkeypatch.setattr(ur, "urlopen", fake_urlopen)
+    from permit_panic import notify as real_notify
+
+    real_notify.send("Open: X", "body", ntfy_topic="t", click_url="https://r.gov/p", action="Book now",
+                     icon_url="https://example.com/icon.png")
+    assert captured["Icon"] == "https://example.com/icon.png"
+    assert captured["Tags"] == "bear"
+    assert captured["Actions"] == "view, Book now, https://r.gov/p"
+
+
+def test_icon_defaults_on_and_can_be_turned_off(tmp_path):
+    from permit_panic.config import DEFAULT_ICON, load_config
+
+    cfg = tmp_path / "config.toml"
+    write_raw(cfg, {})
+    assert load_config(cfg).icon_url == DEFAULT_ICON
+    write_raw(cfg, {"notify": {"icon_url": ""}})
+    assert load_config(cfg).icon_url is None

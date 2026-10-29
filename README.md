@@ -12,6 +12,8 @@ It handles the three kinds of availability Recreation.gov has:
 
 ## Quick start
 
+Setting up on a server for real? Follow **[SETUP.md](SETUP.md)**, which walks through it step by step.
+
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 cp examples/road-trip.toml config.toml   # set your ntfy topic
@@ -46,6 +48,8 @@ The dashboard edits `config.toml`. The watcher notices the change within seconds
 | low      | **Reminders on: _permit_**         | reminders added, with the next date                                          |
 | low      | **Fixed / Paused / Stopped / Ended** | recovered, paused, deleted, or the date window passed                     |
 | min      | **Daily summary**                  | optional: set `[notify] digest_hour = 8` (the server's local time)           |
+
+Every notification shows the bear logo (`assets/icon.png`) as its icon on Android; this needs the repo to be public, or set `[notify] icon_url` to any public PNG. The ntfy iPhone app doesn't show custom icons, so each type also starts with an emoji: 🐻 opening, ⏰ reminder, ✅ confirmation, ⚠️ problem.
 
 To know if the server itself dies, create a free check at [healthchecks.io](https://healthchecks.io) and set `[notify] healthcheck_url`. The watcher pings it every cycle, and healthchecks.io alerts you (it supports ntfy) if the pings stop.
 

@@ -7,12 +7,13 @@ import sys
 from datetime import datetime, timezone
 
 from . import notify
-from .config import load_config
+from .config import load_config, read_raw, write_raw
 from .recgov import RecGov
 from .reminders import parse_events
 from .watch import Watcher
 
 DEFAULT_CONFIG = "config.toml"
+NOTIFY_KEYS = ("ntfy_topic", "ntfy_server", "icon_url", "digest_hour", "healthcheck_url")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,6 +39,11 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name, help=help_)
         p.add_argument("config", nargs="?", default=DEFAULT_CONFIG)
 
+    st = sub.add_parser("set", help="set a [notify] option, e.g. `set healthcheck_url https://...`")
+    st.add_argument("key", choices=NOTIFY_KEYS)
+    st.add_argument("value", help='use "" to clear')
+    st.add_argument("--config", default=DEFAULT_CONFIG)
+
     args = ap.parse_args(argv)
     api = RecGov()
 
@@ -59,6 +65,15 @@ def main(argv: list[str] | None = None) -> int:
         PermitPanicApp(args.config).run()
     elif args.cmd in ("check", "watch"):
         Watcher(args.config, api).run(once=args.cmd == "check")
+    elif args.cmd == "set":
+        raw = read_raw(args.config)
+        notify_cfg = raw.setdefault("notify", {})
+        if args.value == "":
+            notify_cfg.pop(args.key, None)
+        else:
+            notify_cfg[args.key] = int(args.value) if args.key == "digest_hour" else args.value
+        write_raw(args.config, raw)
+        print(f"{args.key} = {notify_cfg.get(args.key, '(cleared)')}")
     elif args.cmd == "test-notify":
         cfg = load_config(args.config)
         if not cfg.ntfy_topic:
@@ -66,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         notify.send("Permit Panic test", "If you can read this on your phone, alerts work.",
                     ntfy_topic=cfg.ntfy_topic, ntfy_server=cfg.ntfy_server, ntfy_token=cfg.ntfy_token,
-                    click_url="https://www.recreation.gov")
+                    icon_url=cfg.icon_url, click_url="https://www.recreation.gov")
     return 0
 
 

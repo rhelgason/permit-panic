@@ -83,7 +83,7 @@ class Watcher:
     def _send(self, cfg: Config, title: str, body: str, **kw) -> None:
         try:
             notify.send(title, body, ntfy_topic=cfg.ntfy_topic, ntfy_server=cfg.ntfy_server,
-                        ntfy_token=cfg.ntfy_token, **kw)
+                        ntfy_token=cfg.ntfy_token, icon_url=cfg.icon_url, **kw)
         except OSError as e:
             print(f"notify failed: {e}", flush=True)
 

@@ -15,6 +15,8 @@ from pathlib import Path
 import tomli_w
 
 KINDS = ("itinerary", "entry", "campground")
+# Needs a publicly reachable PNG; this one works once the repo is public and merged to main.
+DEFAULT_ICON = "https://raw.githubusercontent.com/rhelgason/permit-panic/main/assets/icon.png"
 
 
 @dataclass
@@ -73,6 +75,7 @@ class Config:
     ntfy_topic: str | None = None
     ntfy_server: str = "https://ntfy.sh"
     ntfy_token: str | None = None
+    icon_url: str | None = DEFAULT_ICON
     digest_hour: int | None = None  # local hour for a daily "still alive" summary
     healthcheck_url: str | None = None  # pinged every cycle; e.g. a free healthchecks.io check
     poll_minutes: float = 3.0
@@ -112,6 +115,7 @@ def parse(raw: dict, path: Path) -> Config:
         ntfy_server=n.get("ntfy_server", "https://ntfy.sh"),
         # Prefer the env var so an access token never has to sit in the config file.
         ntfy_token=os.environ.get("NTFY_TOKEN") or n.get("ntfy_token"),
+        icon_url=n.get("icon_url", DEFAULT_ICON) or None,  # icon_url = "" turns it off
         digest_hour=int(n["digest_hour"]) if "digest_hour" in n else None,
         healthcheck_url=n.get("healthcheck_url"),
         poll_minutes=float(raw.get("poll_minutes", 3)),
