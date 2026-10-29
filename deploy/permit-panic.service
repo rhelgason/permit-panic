@@ -1,6 +1,7 @@
 # systemd user service. Install:
 #   mkdir -p ~/.config/systemd/user && cp deploy/permit-panic.service ~/.config/systemd/user/
-#   # optional, for a reserved ntfy topic: echo 'NTFY_TOKEN=tk_...' > ~/.config/permit-panic.env
+#   # optional: keep Pushover keys out of config.toml
+#   #   printf 'PUSHOVER_USER=u...\nPUSHOVER_TOKEN=a...\n' > ~/.config/permit-panic.env
 #   systemctl --user daemon-reload && systemctl --user enable --now permit-panic
 #   loginctl enable-linger $USER     # keep running after you log out
 #   journalctl --user -u permit-panic -f

@@ -380,12 +380,13 @@ class PermitPanicApp(App):
             else:
                 watches[idx] = d  # keep its place in the list
         self._edit(apply)
-        ping = " Your phone gets a confirmation once the watcher has run it." if self._has_topic() else ""
+        ping = " Your phone gets a confirmation once the watcher has run it." if self._can_notify() else ""
         self.notify(f"Saved {d['name']}.{ping}")
 
-    def _has_topic(self) -> bool:
+    def _can_notify(self) -> bool:
         try:
-            return bool(load_config(self.config_path).ntfy_topic)
+            cfg = load_config(self.config_path)
+            return bool(cfg.pushover_user and cfg.pushover_token)
         except (ValueError, KeyError, OSError):
             return False
 

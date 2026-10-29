@@ -15,8 +15,6 @@ from pathlib import Path
 import tomli_w
 
 KINDS = ("itinerary", "entry", "campground")
-# Needs a publicly reachable PNG; this one works once the repo is public and merged to main.
-DEFAULT_ICON = "https://raw.githubusercontent.com/rhelgason/permit-panic/main/assets/icon.png"
 
 
 @dataclass
@@ -72,10 +70,10 @@ class Reminder:
 class Config:
     watches: list[Watch]
     reminders: list[Reminder]
-    ntfy_topic: str | None = None
-    ntfy_server: str = "https://ntfy.sh"
-    ntfy_token: str | None = None
-    icon_url: str | None = DEFAULT_ICON
+    pushover_user: str | None = None  # your user key
+    pushover_token: str | None = None  # the Permit Panic application's API token
+    opening_sound: str | None = "bugle"  # any Pushover sound name; stands out from your other apps
+    emergency_openings: bool = False  # openings keep ringing until acknowledged
     digest_hour: int | None = None  # local hour for a daily "still alive" summary
     healthcheck_url: str | None = None  # pinged every cycle; e.g. a free healthchecks.io check
     poll_minutes: float = 3.0
@@ -111,11 +109,11 @@ def parse(raw: dict, path: Path) -> Config:
         watches=[Watch.from_dict(w) for w in raw.get("watch", [])],
         reminders=[Reminder(r.get("name", str(r["permit_id"])), str(r["permit_id"]), [str(i) for i in r.get("ignore", [])])
                    for r in raw.get("reminder", [])],
-        ntfy_topic=n.get("ntfy_topic"),
-        ntfy_server=n.get("ntfy_server", "https://ntfy.sh"),
-        # Prefer the env var so an access token never has to sit in the config file.
-        ntfy_token=os.environ.get("NTFY_TOKEN") or n.get("ntfy_token"),
-        icon_url=n.get("icon_url", DEFAULT_ICON) or None,  # icon_url = "" turns it off
+        # Env vars win, so the keys can live in the systemd env file instead of the config.
+        pushover_user=os.environ.get("PUSHOVER_USER") or n.get("pushover_user"),
+        pushover_token=os.environ.get("PUSHOVER_TOKEN") or n.get("pushover_token"),
+        opening_sound=n.get("opening_sound", "bugle") or None,
+        emergency_openings=bool(n.get("emergency_openings", False)),
         digest_hour=int(n["digest_hour"]) if "digest_hour" in n else None,
         healthcheck_url=n.get("healthcheck_url"),
         poll_minutes=float(raw.get("poll_minutes", 3)),

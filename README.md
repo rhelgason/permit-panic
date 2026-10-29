@@ -16,7 +16,7 @@ Setting up on a server for real? Follow **[SETUP.md](SETUP.md)**, which walks th
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-cp examples/road-trip.toml config.toml   # set your ntfy topic
+cp examples/road-trip.toml config.toml   # set your Pushover keys
 .venv/bin/permit-panic test-notify       # confirm your phone buzzes
 .venv/bin/permit-panic tui               # add watches and reminders
 .venv/bin/permit-panic watch             # poll forever (or `check` for one pass)
@@ -34,32 +34,32 @@ cp examples/road-trip.toml config.toml   # set your ntfy topic
 | `x`     | mute the highlighted reminder date                                            |
 | `r`     | refresh                                                                       |
 
-The dashboard edits `config.toml`. The watcher notices the change within seconds, runs the new watch, and sends a quiet "Now watching" ping to your phone. That ping proves the whole chain works: the config saved, the watcher is alive, Recreation.gov answered, and ntfy delivered. Run both on the same machine and use SSH for the dashboard.
+The dashboard edits `config.toml`. The watcher notices the change within seconds, runs the new watch, and sends a quiet "Now watching" ping to your phone. That ping proves the whole chain works: the config saved, the watcher is alive, Recreation.gov answered, and Pushover delivered. Run both on the same machine and use SSH for the dashboard.
 
 ## Notifications
 
 | priority | title                              | when                                                                         |
 |----------|------------------------------------|------------------------------------------------------------------------------|
-| urgent   | **Open: _watch_**                  | new openings, collapsed per route (`Start Dec 01-19: A -> B`), **Book now** button |
-| high     | **In 30 min: _permit_**            | a reservation opening / lottery date is about to start                       |
-| default  | **Tomorrow: _permit_**             | the same, 24 hours ahead                                                     |
-| default  | **Problem with / Watch broken**    | a just-saved watch fails its first check, or a watch keeps failing for 30 min |
-| low      | **Now watching / Updated / Resumed** | the watcher loaded your new or edited watch, with its first result          |
-| low      | **Reminders on: _permit_**         | reminders added, with the next date                                          |
-| low      | **Fixed / Paused / Stopped / Ended** | recovered, paused, deleted, or the date window passed                     |
-| min      | **Daily summary**                  | optional: set `[notify] digest_hour = 8` (the server's local time)           |
+| high + 🎺 | **🐻 Open: _watch_**              | new openings, collapsed per route (`Start Dec 01-19: A -> B`), **Book now** link. Bypasses quiet hours |
+| high     | **⏰ In 30 min: _permit_**          | a reservation opening / lottery date is about to start                       |
+| normal   | **⏰ Tomorrow: _permit_**           | the same, 24 hours ahead                                                     |
+| normal   | **⚠️ Problem with / Watch broken**  | a just-saved watch fails its first check, or a watch keeps failing for 30 min |
+| silent   | **✅ Now watching / Updated / Resumed** | the watcher loaded your new or edited watch, with its first result       |
+| silent   | **✅ Reminders on: _permit_**       | reminders added, with the next date                                          |
+| silent   | **✅ Fixed · Paused · Stopped · ⌛ Ended** | recovered, paused, deleted, or the date window passed                 |
+| silent   | **🌅 Daily summary**                | optional: `permit-panic set digest_hour 8` (the server's local time)         |
 
-Every notification shows the bear logo (`assets/icon.png`) as its icon on Android; this needs the repo to be public, or set `[notify] icon_url` to any public PNG. The ntfy iPhone app doesn't show custom icons, so each type also starts with an emoji: 🐻 opening, ⏰ reminder, ✅ confirmation, ⚠️ problem.
+Openings play the `bugle` sound so they stand out from your other Pushover apps (`set opening_sound <name>` to change it). `set emergency_openings true` makes openings repeat every minute for up to 30 minutes until you tap Acknowledge.
 
-To know if the server itself dies, create a free check at [healthchecks.io](https://healthchecks.io) and set `[notify] healthcheck_url`. The watcher pings it every cycle, and healthchecks.io alerts you (it supports ntfy) if the pings stop.
+To know if the server itself dies, create a free check at [healthchecks.io](https://healthchecks.io), connect its Pushover integration, and `set healthcheck_url`. The watcher pings it every cycle, and healthchecks.io alerts you if the pings stop.
 
 ## Reminders
 
 For every reminder permit, the watcher reads the "important dates" the permit lists on Recreation.gov and pings your phone **24 hours and 30 minutes before** each one. That covers reservation openings (e.g. Teton: Jan 11 2027, 8:00 AM MT), lottery windows opening, and the day a lottery window closes. If the listing gives no time, it assumes 9 AM (5 PM on a closing day) in the park's time zone and labels it `time ?`. Use `permit-panic dates <permit_id>` to preview them.
 
-## Phone alerts (ntfy)
+## Phone alerts (Pushover)
 
-Set `ntfy_topic` in `config.toml`. You can reuse the topic you already use for another project, but a separate topic keeps the alerts apart. If the topic is reserved on an ntfy account, run `export NTFY_TOKEN=tk_...` (or put it in the systemd env file below), so the token never lives in the config. For a self-hosted ntfy server, set `ntfy_server`.
+You need your Pushover **user key** and an **application API token**. Create a separate "Permit Panic" application (free) rather than reusing another project's token: it gets its own name and the bear icon (`assets/icon-72.png`) on iOS and Android, and you can mute it on its own. Set the keys with `permit-panic set pushover_user …` / `set pushover_token …`, or as `PUSHOVER_USER` / `PUSHOVER_TOKEN` env vars (e.g. in `~/.config/permit-panic.env`, which the systemd unit loads). All your Pushover apps share one 10,000-messages-a-month free allowance; this one uses a handful a day.
 
 ## Running it 24/7 for free
 

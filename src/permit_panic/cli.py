@@ -13,7 +13,8 @@ from .reminders import parse_events
 from .watch import Watcher
 
 DEFAULT_CONFIG = "config.toml"
-NOTIFY_KEYS = ("ntfy_topic", "ntfy_server", "icon_url", "digest_hour", "healthcheck_url")
+NOTIFY_KEYS = ("pushover_user", "pushover_token", "opening_sound", "emergency_openings", "digest_hour",
+               "healthcheck_url")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,17 +72,26 @@ def main(argv: list[str] | None = None) -> int:
         if args.value == "":
             notify_cfg.pop(args.key, None)
         else:
-            notify_cfg[args.key] = int(args.value) if args.key == "digest_hour" else args.value
+            notify_cfg[args.key] = (int(args.value) if args.key == "digest_hour"
+                                    else args.value.lower() in ("1", "true", "yes", "on")
+                                    if args.key == "emergency_openings" else args.value)
         write_raw(args.config, raw)
-        print(f"{args.key} = {notify_cfg.get(args.key, '(cleared)')}")
+        shown = notify_cfg.get(args.key, "(cleared)")
+        if args.key in ("pushover_user", "pushover_token") and args.value:
+            shown = f"{args.value[:4]}…"  # don't echo secrets into the scrollback
+        print(f"{args.key} = {shown}")
     elif args.cmd == "test-notify":
         cfg = load_config(args.config)
-        if not cfg.ntfy_topic:
-            print("set [notify] ntfy_topic in your config first", file=sys.stderr)
+        if not (cfg.pushover_user and cfg.pushover_token):
+            print("run `permit-panic set pushover_user ...` and `set pushover_token ...` first", file=sys.stderr)
             return 1
-        notify.send("Permit Panic test", "If you can read this on your phone, alerts work.",
-                    ntfy_topic=cfg.ntfy_topic, ntfy_server=cfg.ntfy_server, ntfy_token=cfg.ntfy_token,
-                    icon_url=cfg.icon_url, click_url="https://www.recreation.gov")
+        try:
+            notify.send("Permit Panic test", "If you can read this on your phone, alerts work.",
+                        token=cfg.pushover_token, user=cfg.pushover_user, sound=cfg.opening_sound,
+                        click_url="https://www.recreation.gov", action="Book now")
+        except notify.NotifyError as e:
+            print(e, file=sys.stderr)
+            return 1
     return 0
 
 

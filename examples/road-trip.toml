@@ -7,11 +7,12 @@
 poll_minutes = 3
 
 [notify]
-# Install the ntfy app (iOS/Android), subscribe to this topic. Pick something unguessable:
-# anyone who knows the topic name can read it.
-ntfy_topic = "permit-panic-CHANGE-ME-1234"
-# If you reserved the topic on an ntfy account, export NTFY_TOKEN=tk_... instead of putting it here.
-# Self-hosting ntfy? ntfy_server = "https://ntfy.example.com"
+# Pushover: your user key, plus the API token of a "Permit Panic" application (upload
+# assets/icon-72.png as its icon). Or set PUSHOVER_USER / PUSHOVER_TOKEN env vars instead.
+pushover_user = "uXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+pushover_token = "aXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+# opening_sound = "bugle"             # any Pushover sound
+# emergency_openings = true           # openings repeat every minute until you acknowledge
 # digest_hour = 8                     # daily "still alive" summary, server's local time
 # healthcheck_url = "https://hc-ping.com/your-uuid"   # free dead-man's switch if the server dies
 

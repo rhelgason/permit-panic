@@ -64,7 +64,7 @@ def watch(**over):
 
 def test_lifecycle_notifications(tmp_path, sent):
     cfg = tmp_path / "config.toml"
-    write_raw(cfg, {"notify": {"ntfy_topic": "t"}})
+    write_raw(cfg, {"notify": {"pushover_user": "u", "pushover_token": "a"}})
     api = FakeApi()
     w = Watcher(cfg, api)
     titles = lambda: [t for t, _ in sent]  # noqa: E731
@@ -72,7 +72,7 @@ def test_lifecycle_notifications(tmp_path, sent):
     w.cycle(NOW - timedelta(days=5))
     assert sent == []  # nothing configured, nothing to say
 
-    write_raw(cfg, {"notify": {"ntfy_topic": "t"}, "watch": [watch()]})
+    write_raw(cfg, {"notify": {"pushover_user": "u", "pushover_token": "a"}, "watch": [watch()]})
     w.cycle(NOW - timedelta(days=5))
     assert titles() == ["Now watching: Teton", "Open: Teton"]
     assert sent[0][1] == "low" and sent[1][1] == "urgent"
@@ -97,7 +97,7 @@ def test_lifecycle_notifications(tmp_path, sent):
     assert titles() == ["Paused: Teton", "Resumed: Teton"]
 
     sent.clear()
-    write_raw(cfg, {"notify": {"ntfy_topic": "t"}, "watch": []})
+    write_raw(cfg, {"notify": {"pushover_user": "u", "pushover_token": "a"}, "watch": []})
     w.cycle(NOW - timedelta(days=5))
     assert titles() == ["Stopped watching: Teton"]
 
@@ -192,34 +192,66 @@ def test_daily_digest_once_per_day(tmp_path, sent):
     assert [t for t, _ in sent] == ["Permit Panic daily summary"]
 
 
-def test_send_sets_icon_emoji_and_button(monkeypatch):
+def _capture(monkeypatch, status=200, body=b'{"status":1}'):
+    import io
+    import urllib.error
+    import urllib.parse
     import urllib.request as ur
 
-    captured = {}
+    sent_forms = []
 
     class Resp:
         def close(self):
             pass
 
     def fake_urlopen(req, timeout=None):
-        captured.update(req.headers, url=req.full_url)
+        sent_forms.append(dict(urllib.parse.parse_qsl(req.data.decode())))
+        if status != 200:
+            raise urllib.error.HTTPError(req.full_url, status, "Bad Request", {}, io.BytesIO(body))
         return Resp()
 
     monkeypatch.setattr(ur, "urlopen", fake_urlopen)
     from permit_panic import notify as real_notify
 
-    real_notify.send("Open: X", "body", ntfy_topic="t", click_url="https://r.gov/p", action="Book now",
-                     icon_url="https://example.com/icon.png")
-    assert captured["Icon"] == "https://example.com/icon.png"
-    assert captured["Tags"] == "bear"
-    assert captured["Actions"] == "view, Book now, https://r.gov/p"
+    return real_notify, sent_forms
 
 
-def test_icon_defaults_on_and_can_be_turned_off(tmp_path):
-    from permit_panic.config import DEFAULT_ICON, load_config
+def test_pushover_opening_fields(monkeypatch):
+    real_notify, forms = _capture(monkeypatch)
+    real_notify.send("Open: X", "body", token="a1", user="u1", click_url="https://r.gov/p", action="Book now",
+                     sound="bugle")
+    assert forms == [{"token": "a1", "user": "u1", "title": "🐻 Open: X", "message": "body", "priority": "1",
+                      "sound": "bugle", "url": "https://r.gov/p", "url_title": "Book now"}]
+
+
+def test_pushover_quiet_and_emergency(monkeypatch):
+    real_notify, forms = _capture(monkeypatch)
+    real_notify.send("Now watching: X", "b", token="a", user="u", priority="low", tags="white_check_mark",
+                     sound="bugle")
+    real_notify.send("Open: X", "b", token="a", user="u", emergency=True)
+    quiet, loud = forms
+    assert quiet["priority"] == "-1" and "sound" not in quiet and quiet["title"].startswith("✅")
+    assert (loud["priority"], loud["retry"], loud["expire"]) == ("2", "60", "1800")
+
+
+def test_pushover_error_is_readable_and_long_text_trimmed(monkeypatch):
+    real_notify, forms = _capture(monkeypatch, 400, b'{"token":"invalid","errors":["application token is invalid"],"status":0}')
+    with pytest.raises(real_notify.NotifyError, match="application token is invalid"):
+        real_notify.send("t" * 300, "m" * 2000, token="bad", user="u")
+    assert len(forms[0]["title"]) == 250 and len(forms[0]["message"]) == 1024
+
+
+def test_no_keys_means_console_only(monkeypatch):
+    real_notify, forms = _capture(monkeypatch)
+    real_notify.send("Open: X", "b", token=None, user="u")
+    assert forms == []
+
+
+def test_pushover_keys_from_env_win(tmp_path, monkeypatch):
+    from permit_panic.config import load_config
 
     cfg = tmp_path / "config.toml"
-    write_raw(cfg, {})
-    assert load_config(cfg).icon_url == DEFAULT_ICON
-    write_raw(cfg, {"notify": {"icon_url": ""}})
-    assert load_config(cfg).icon_url is None
+    write_raw(cfg, {"notify": {"pushover_user": "from-file", "pushover_token": "from-file"}})
+    monkeypatch.setenv("PUSHOVER_TOKEN", "from-env")
+    c = load_config(cfg)
+    assert (c.pushover_user, c.pushover_token, c.opening_sound) == ("from-file", "from-env", "bugle")
