@@ -182,7 +182,13 @@ def parse_campground(data: dict) -> dict[str, dict[date, bool]]:
     return out
 
 
-def booking_url(kind: str, entity_id: str) -> str:
+def booking_url(kind: str, entity_id: str, day: date | None = None) -> str:
+    """Where "Book now" goes. It can't fill the cart (that's a hold on the user's own logged-in
+    account), but a permit's availability grid honors ?date=, so it opens on the opening's date;
+    the starting area and group size still have to be picked on the page. Campground pages
+    ignore date parameters, so they get the plain page."""
     if kind == "campground":
         return f"{BASE}/camping/campgrounds/{entity_id}"
+    if day:
+        return f"{BASE}/permits/{entity_id}/registration/detailed-availability?date={day.isoformat()}"
     return f"{BASE}/permits/{entity_id}"

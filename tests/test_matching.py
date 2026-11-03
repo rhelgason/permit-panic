@@ -84,3 +84,12 @@ def test_summarize_collapses_consecutive_days():
     ms += [Match("x", D(2027, 1, 1), "A -> B"), Match("y", D(2026, 12, 2), "C")]
     assert summarize(ms) == "Dec 01-03, Dec 05, Dec 30-Jan 01: A -> B\nDec 02: C"
     assert summarize(ms, limit=1).endswith("...and 1 more options")
+
+
+def test_booking_url_opens_on_the_opening_date():
+    from permit_panic.recgov import booking_url
+
+    assert booking_url("itinerary", "4675338", D(2026, 12, 5)) == (
+        "https://www.recreation.gov/permits/4675338/registration/detailed-availability?date=2026-12-05")
+    assert booking_url("permit", "4675342") == "https://www.recreation.gov/permits/4675342"
+    assert booking_url("campground", "232447", D(2026, 12, 5)) == "https://www.recreation.gov/camping/campgrounds/232447"

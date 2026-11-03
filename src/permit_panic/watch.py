@@ -164,7 +164,7 @@ class Watcher:
             print(f"[{stamp}] {w.name}: {len(matches)} open, {len(new)} new", flush=True)
             if new:
                 lead = "Start " if w.kind == "itinerary" else ""
-                self._send(cfg, f"Open: {w.name}", lead + summarize(new), click_url=booking_url(w.kind, w.entity_id),
+                self._send(cfg, f"Open: {w.name}", lead + summarize(new), click_url=booking_url(w.kind, w.entity_id, min(m.day for m in new)),
                            action="Book now")
 
         current = {w.name for w in cfg.watches}
