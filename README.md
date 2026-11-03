@@ -26,13 +26,15 @@ cp examples/road-trip.toml config.toml   # set your Pushover keys
 
 | key     | does                                                                          |
 |---------|-------------------------------------------------------------------------------|
-| `a`     | add a watch: search a park → pick zones per night / trailheads → set dates    |
+| `a`     | add a watch: search a park, permit, **camp or trailhead** → pick zones per night / trailheads → set dates |
 | `e`     | edit the highlighted watch (dates, group size, route, trailheads)             |
 | `m`     | add release + lottery reminders for a permit                                  |
 | `space` | pause/resume a watch                                                          |
 | `d`     | delete the highlighted watch or reminder                                      |
 | `x`     | mute the highlighted reminder date                                            |
 | `r`     | refresh                                                                       |
+
+Search also finds camps and trailheads *inside* permits, which Recreation.gov's own search can't: "camp muir" goes straight to Camp Muir Alpine Camp in the Mount Rainier Wilderness and Climbing permit, already ticked. The watcher keeps an index of all ~3,300 zones in Recreation.gov's 134 permits and rebuilds it weekly in the background; `permit-panic index` rebuilds it now.
 
 The dashboard edits `config.toml`. The watcher notices the change within seconds, runs the new watch, and sends a quiet "Now watching" ping to your phone. That ping proves the whole chain works: the config saved, the watcher is alive, Recreation.gov answered, and Pushover delivered. Run both on the same machine and use SSH for the dashboard.
 

@@ -23,24 +23,25 @@ from .config import Watch, load_config, read_raw, write_raw
 from .matching import resolve_divisions
 from .recgov import RecGov, RecGovError, SearchResult
 from .reminders import parse_events, visible
+from . import zones
 
 BOOKABLE = ("permit", "campground")
 
 
 class SearchScreen(ModalScreen[SearchResult | None]):
-    """Type a park or permit name, pick a result."""
+    """Type a park, permit, camp zone or trailhead name, pick a result."""
 
     BINDINGS = [("escape", "dismiss(None)", "Cancel")]
 
-    def __init__(self, api: RecGov, title: str, permits_only: bool = False):
+    def __init__(self, api: RecGov, title: str, permits_only: bool = False, zones_path: Path | None = None):
         super().__init__()
-        self.api, self.title_text, self.permits_only = api, title, permits_only
+        self.api, self.title_text, self.permits_only, self.zones_path = api, title, permits_only, zones_path
         self.results: list[SearchResult] = []
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label(self.title_text, classes="title")
-            yield Input(placeholder="e.g. grand teton backcountry, enchantments, jenny lake", id="q")
+            yield Input(placeholder="e.g. camp muir, grand teton backcountry, enchantments, jenny lake", id="q")
             yield OptionList(id="results")
             yield Label("Enter to search, then pick a result. Esc to cancel.", classes="hint")
 
@@ -56,14 +57,24 @@ class SearchScreen(ModalScreen[SearchResult | None]):
         except (RecGovError, OSError) as e:
             self.app.call_from_thread(self.app.notify, str(e), severity="error")
             return
+        index = zones.load(self.zones_path) if self.zones_path else None
+        zone_hits = zones.search(index, q)
+        if self.permits_only:  # reminders are per permit: a zone hit stands for the permit it's in
+            zone_hits = list({z.entity_id: SearchResult("permit", z.entity_id, z.parent, "") for z in zone_hits}.values())
         kinds = ("permit",) if self.permits_only else BOOKABLE
-        self.results = [r for r in found if r.entity_type in kinds]
+        named = sorted((r for r in found if r.entity_type in kinds), key=lambda r: r.entity_type != "permit")
+        seen = {r.entity_id for r in zone_hits if r.entity_type == "permit"}
+        self.results = zone_hits + [r for r in named if r.entity_id not in seen]
+        if index is None:
+            self.app.call_from_thread(self.app.notify, "Camp/trailhead search isn't ready yet; the watcher builds it "
+                                      "within a few minutes of starting.")
         self.app.call_from_thread(self._show)
 
     def _show(self) -> None:
         ol = self.query_one("#results", OptionList)
         ol.clear_options()
-        ol.add_options([Option(f"[{r.entity_type}] {r.name}  ({r.parent})  #{r.entity_id}") for r in self.results])
+        ol.add_options([Option(f"[zone] {r.name}  · in {r.parent}" if r.entity_type == "zone"
+                               else f"[{r.entity_type}] {r.name}  ({r.parent})  #{r.entity_id}") for r in self.results])
         if not self.results:
             self.app.notify("No bookable permits or campgrounds found.")
             return
@@ -83,7 +94,8 @@ class WatchForm(ModalScreen[dict | None]):
     def __init__(self, result: SearchResult, kind: str, divisions: dict[str, str], existing: Watch | None = None):
         super().__init__()
         self.result, self.kind, self.divisions, self.existing = result, kind, divisions, existing
-        self.selected: set[str] = set()
+        # Picked from a camp-zone search hit: start with that zone ticked.
+        self.selected: set[str] = {result.division_id} if result.division_id in divisions else set()
         self.nights: list[list[str]] = []
         if existing:
             # Hand-written configs may use name fragments; turn them back into ids so the boxes tick.
@@ -102,7 +114,8 @@ class WatchForm(ModalScreen[dict | None]):
         e = self.existing
         with VerticalScroll(classes="dialog wide"):
             verb = "Edit" if e else "New"
-            yield Label(f"{verb} {self.kind} watch: {self.result.name}", classes="title")
+            permit_name = self.result.parent if self.result.entity_type == "zone" else self.result.name
+            yield Label(f"{verb} {self.kind} watch: {permit_name}", classes="title")
             with Horizontal(classes="row"):
                 yield Input(e.name if e else self.result.name, placeholder="name", id="name")
                 yield Input(e.earliest.isoformat() if e else f"{nxt:%Y}-07-01", placeholder="earliest YYYY-MM-DD",
@@ -346,7 +359,8 @@ class PermitPanicApp(App):
         self.action_refresh()
 
     def action_add_watch(self) -> None:
-        self.push_screen(SearchScreen(self.api, "Add a watch: search for a permit or campground"), self._picked)
+        self.push_screen(SearchScreen(self.api, "Add a watch: search a permit, campground, camp or trailhead",
+                                      zones_path=self._zones_path()), self._picked)
 
     def _picked(self, result: SearchResult | None) -> None:
         if result:
@@ -428,8 +442,15 @@ class PermitPanicApp(App):
         self.notify(f"Muted: {desc[:60]}")
 
     def action_add_reminder(self) -> None:
-        self.push_screen(SearchScreen(self.api, "Add release/lottery reminders for a permit", permits_only=True),
+        self.push_screen(SearchScreen(self.api, "Add release/lottery reminders for a permit", permits_only=True,
+                                      zones_path=self._zones_path()),
                          self._save_reminder)
+
+    def _zones_path(self) -> Path | None:
+        try:
+            return load_config(self.config_path).zones_file
+        except (ValueError, KeyError, OSError):
+            return None
 
     def _save_reminder(self, result: SearchResult | None) -> None:
         if result:

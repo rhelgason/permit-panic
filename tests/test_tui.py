@@ -95,3 +95,34 @@ def test_edit_watch_keeps_position_and_pause(tmp_path):
     assert first["name"] == "First" and second["name"] == "Second"
     assert str(first["latest"]) == "2027-07-20" and first["group_size"] == 4
     assert first["enabled"] is False
+
+
+def test_zone_search_hit_preselects_the_zone(tmp_path):
+    from permit_panic import zones
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("")
+    zones.save(tmp_path / ".permit-panic-zones.json", {"built": "2099-01-01T00:00:00+00:00", "permits": {
+        "4675342": {"name": "Grand Teton Backcountry", "zones": {"28": "Cascade South Fork", "30": "Death Canyon Shelf"}}}})
+
+    async def run():
+        app = PermitPanicApp(cfg, api=FakeApi())
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.press("a")
+            await pilot.press(*"death canyon", "enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.screen.results[0].entity_type == "zone"
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            form = app.screen
+            assert isinstance(form, WatchForm)
+            assert form.selected == {"30"}
+            form.add_night()
+            form.save()
+            await pilot.pause()
+
+    asyncio.run(run())
+    w = read_raw(cfg)["watch"][0]
+    assert (w["permit_id"], w["nights"], w["name"]) == ("4675342", [["30"]], "Death Canyon Shelf")

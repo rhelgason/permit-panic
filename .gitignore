@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 .permit-panic-state.json
 config.toml
+.permit-panic-zones.json
+.permit-panic-status.json

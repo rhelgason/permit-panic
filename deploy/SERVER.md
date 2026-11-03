@@ -19,6 +19,8 @@ panic tui                     # the dashboard
 panic update                  # pull the latest main and restart
 panic test-notify
 panic dates 4675342           # a permit's release / lottery dates
+panic search camp muir        # find a camp / trailhead inside a permit
+panic index                   # rebuild that search index now (the watcher does it weekly)
 ssh root@104.131.18.118 'systemctl status permit-panic --no-pager; journalctl -u permit-panic -n 50 --no-pager'
 ```
 

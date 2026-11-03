@@ -6,7 +6,7 @@ import argparse
 import sys
 from datetime import datetime, timezone
 
-from . import notify
+from . import notify, zones
 from .config import load_config, read_raw, write_raw
 from .recgov import RecGov
 from .reminders import parse_events
@@ -21,8 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="permit-panic", description="Watch Recreation.gov for permits.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("search", help="find permit / campground ids")
+    s = sub.add_parser("search", help="find permit / campground / camp zone ids")
     s.add_argument("query", nargs="+")
+    s.add_argument("--config", default=DEFAULT_CONFIG)
+
+    ix = sub.add_parser("index", help="rebuild the camp zone / trailhead search index now (the watcher does it weekly)")
+    ix.add_argument("--config", default=DEFAULT_CONFIG)
 
     d = sub.add_parser("divisions", help="list the zones, sites or trailheads in a permit")
     d.add_argument("permit_id")
@@ -49,8 +53,18 @@ def main(argv: list[str] | None = None) -> int:
     api = RecGov()
 
     if args.cmd == "search":
-        for r in api.search(" ".join(args.query)):
+        q = " ".join(args.query)
+        for z in zones.search(zones.load(load_config(args.config).zones_file), q):
+            print(f"{'zone':<11} {z.entity_id:<10} {z.name}  (in {z.parent}; zone {z.division_id})")
+        for r in api.search(q):
             print(f"{r.entity_type:<11} {r.entity_id:<10} {r.name}  ({r.parent})")
+    elif args.cmd == "index":
+        path = load_config(args.config).zones_file
+        index = zones.build(RecGov(min_interval=0.5),
+                            progress=lambda i, n: print(f"\r{i}/{n} permits", end="", flush=True))
+        zones.save(path, index)
+        print(f"\nIndexed {sum(len(p['zones']) for p in index['permits'].values())} zones in "
+              f"{len(index['permits'])} permits -> {path}")
     elif args.cmd == "divisions":
         for div_id, name in api.permit_divisions(args.permit_id).items():
             if args.filter.lower() in name.lower():

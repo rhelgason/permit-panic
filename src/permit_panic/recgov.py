@@ -34,10 +34,11 @@ class RecGovError(RuntimeError):
 
 @dataclass(frozen=True)
 class SearchResult:
-    entity_type: str
-    entity_id: str
+    entity_type: str  # permit | campground | zone (a camp zone / trailhead inside a permit) | ...
+    entity_id: str  # for a zone: its permit's id
     name: str
     parent: str
+    division_id: str | None = None  # zones only
 
 
 class RecGov:
@@ -77,6 +78,11 @@ class RecGov:
             )
             for r in data.get("results", [])
         ]
+
+    def list_permits(self) -> list[tuple[str, str]]:
+        """Every permit on Recreation.gov as (id, name); about 134 of them."""
+        data = self._get("/api/search", {"fq": "entity_type:permit", "size": 1000})
+        return [(str(r["entity_id"]), r.get("name", "")) for r in data.get("results", []) if r.get("entity_id")]
 
     def permit_content(self, permit_id: str) -> dict:
         return self._get(f"/api/permitcontent/{permit_id}")["payload"]

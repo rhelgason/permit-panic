@@ -25,6 +25,7 @@ from .config import Config, Watch, load_config, read_raw
 from .matching import Match, summarize, match_campground, match_entry, match_itinerary, months_between, resolve_divisions
 from .recgov import RecGov, RecGovError, booking_url
 from .reminders import Event, describe_lead, due_alerts, parse_events, visible
+from . import zones
 
 CONTENT_TTL = 6 * 3600  # permit metadata (zone names, important dates) rarely changes
 ERROR_GRACE = timedelta(minutes=30)  # don't page for a blip; Recreation.gov hiccups often
@@ -251,6 +252,11 @@ class Watcher:
         return "\n".join(lines) or "Nothing configured."
 
     def run(self, once: bool = False) -> None:
+        if not once:
+            try:
+                zones.keep_fresh(load_config(self.config_path).zones_file)
+            except (ValueError, KeyError, OSError) as e:
+                print(f"zone index disabled: {e}", flush=True)
         while True:
             try:
                 cfg = self.cycle()

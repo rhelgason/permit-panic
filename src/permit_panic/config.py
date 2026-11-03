@@ -79,6 +79,7 @@ class Config:
     poll_minutes: float = 3.0
     state_file: Path = Path(".permit-panic-state.json")
     status_file: Path = Path(".permit-panic-status.json")
+    zones_file: Path = Path(".permit-panic-zones.json")
 
 
 def _as_date(v) -> date:
@@ -119,6 +120,7 @@ def parse(raw: dict, path: Path) -> Config:
         poll_minutes=float(raw.get("poll_minutes", 3)),
         state_file=rel(raw.get("state_file", ".permit-panic-state.json")),
         status_file=rel(raw.get("status_file", ".permit-panic-status.json")),
+        zones_file=rel(raw.get("zones_file", ".permit-panic-zones.json")),
     )
 
 
