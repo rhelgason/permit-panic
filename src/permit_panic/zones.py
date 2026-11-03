@@ -23,19 +23,41 @@ TTL = timedelta(days=7)
 BUNDLED = Path(__file__).parent / "data" / "zones.json"
 
 
-def build(api: RecGov, progress=None) -> dict:
-    permits = {}
+FETCH_ERRORS = (RecGovError, OSError, ValueError, KeyError)  # incl. a cut-off ~1 MB response
+
+
+def build(api: RecGov, progress=None, previous: dict | None = None, retry_waits=(5, 20)) -> dict:
+    """Fetch every permit's zone names. Each permit's details are ~1 MB, so over 134 of them a few
+    requests can fail: those are retried, and any still failing keep their entry from `previous`
+    (default: the bundled snapshot) rather than vanishing from search. Failures are listed in
+    the result's "failed"."""
+    previous = previous if previous is not None else load(BUNDLED) or {}
     listed = api.list_permits()
-    for i, (pid, name) in enumerate(listed, 1):
-        try:
-            content = api.permit_content(pid)
-        except (RecGovError, OSError):
-            continue  # a broken listing shouldn't sink the whole index
-        zones = {k: v.get("name", k) for k, v in (content.get("divisions") or {}).items()}
-        permits[pid] = {"name": content.get("name") or name, "zones": zones}
-        if progress:
-            progress(i, len(listed))
-    return {"built": datetime.now(timezone.utc).isoformat(), "permits": permits}
+    permits: dict = {}
+    errors: dict[str, str] = {}
+    pending = listed
+    for wait in (0, *retry_waits):
+        if not pending:
+            break
+        time.sleep(wait)
+        retry = []
+        for pid, name in pending:
+            try:
+                content = api.permit_content(pid)
+            except FETCH_ERRORS as e:
+                retry.append((pid, name))
+                errors[pid] = f"{name}: {str(e)[:120]}"
+                continue
+            errors.pop(pid, None)
+            permits[pid] = {"name": content.get("name") or name,
+                            "zones": {k: v.get("name", k) for k, v in (content.get("divisions") or {}).items()}}
+            if progress:
+                progress(len(permits), len(listed))
+        pending = retry
+    for pid in errors:
+        if pid in previous.get("permits", {}):
+            permits[pid] = previous["permits"][pid]
+    return {"built": datetime.now(timezone.utc).isoformat(), "permits": permits, "failed": errors}
 
 
 def load(path: Path) -> dict | None:
@@ -46,9 +68,14 @@ def load(path: Path) -> dict | None:
 
 
 def load_best(path: Path | None) -> dict | None:
-    """The watcher's fresh index if there is one, else the bundled snapshot."""
-    index = load(path) if path else None
-    return index if index and index.get("permits") else load(BUNDLED)
+    """The bundled snapshot with the watcher's fresher index laid over it, permit by permit, so a
+    permit missing from the local copy still turns up from the snapshot."""
+    bundled, local = load(BUNDLED), (load(path) if path else None)
+    if not (local and local.get("permits")):
+        return bundled
+    if not bundled:
+        return local
+    return {"built": local["built"], "permits": {**bundled["permits"], **local["permits"]}}
 
 
 def describe(index: dict | None) -> str:
@@ -100,11 +127,13 @@ def keep_fresh(path: Path, check_every: float = 3600) -> threading.Thread:
     def loop():
         api = RecGov(min_interval=1.5)
         while True:
-            if stale(load(path)):
+            current = load(path)
+            if stale(current):
                 try:
-                    save(path, build(api))
-                    print(f"zone index rebuilt: {path}", flush=True)
-                except (RecGovError, OSError) as e:
+                    index = build(api, previous=load_best(path))
+                    save(path, index)
+                    print(f"zone index rebuilt: {path} ({len(index['failed'])} permits failed)", flush=True)
+                except FETCH_ERRORS as e:
                     print(f"zone index rebuild failed: {e}", flush=True)
             time.sleep(check_every)
 

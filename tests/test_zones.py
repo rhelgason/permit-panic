@@ -41,7 +41,7 @@ def test_build_and_save_roundtrip(tmp_path):
                 raise OSError("boom")
             return {"name": "One", "divisions": {"a": {"name": "Zone A"}}}
 
-    index = zones.build(Api())
+    index = zones.build(Api(), previous={}, retry_waits=(0, 0))
     assert index["permits"] == {"1": {"name": "One", "zones": {"a": "Zone A"}}}  # broken listing skipped
     zones.save(tmp_path / "z.json", index)
     assert zones.load(tmp_path / "z.json")["permits"] == index["permits"]
@@ -55,6 +55,40 @@ def test_bundled_snapshot_finds_camp_muir_with_no_local_index(tmp_path):
     assert zones.describe(index).startswith("Searching 3,")
 
 
-def test_local_index_wins_over_bundled(tmp_path):
-    zones.save(tmp_path / "z.json", INDEX)
-    assert zones.load_best(tmp_path / "z.json")["permits"] == INDEX["permits"]
+def test_local_index_overrides_bundled_per_permit(tmp_path):
+    local = {"built": INDEX["built"], "permits": {"4675317": {"name": "Rainier", "zones": {"69": "Renamed Camp"}}}}
+    zones.save(tmp_path / "z.json", local)
+    merged = zones.load_best(tmp_path / "z.json")["permits"]
+    assert merged["4675317"]["zones"] == {"69": "Renamed Camp"}  # the fresher local copy wins
+    assert len(merged) > 100  # everything else still comes from the bundled snapshot
+
+
+def test_failed_permit_is_retried_then_kept_from_previous():
+    calls = {"rainier": 0}
+
+    class Flaky:
+        def list_permits(self):
+            return [("1", "Glacier"), ("4675317", "Rainier"), ("9", "Gone")]
+
+        def permit_content(self, pid):
+            if pid == "4675317":
+                calls["rainier"] += 1
+                raise ValueError("truncated JSON")  # a cut-off 1 MB response
+            if pid == "9":
+                raise OSError("timed out")
+            return {"name": "Glacier", "divisions": {"g": {"name": "Muir Creek Spike Camp"}}}
+
+    index = zones.build(Flaky(), previous=INDEX, retry_waits=(0, 0))
+    assert calls["rainier"] == 3  # first try + two retries
+    assert index["permits"]["4675317"]["zones"]["69"] == "Camp Muir Alpine Camp"  # kept, not dropped
+    assert "9" not in index["permits"] and set(index["failed"]) == {"4675317", "9"}
+
+
+def test_partial_local_index_still_finds_bundled_permits(tmp_path, monkeypatch):
+    bundled = tmp_path / "bundled.json"
+    zones.save(bundled, INDEX)
+    monkeypatch.setattr(zones, "BUNDLED", bundled)
+    local = {"built": INDEX["built"], "permits": {"445859": INDEX["permits"]["445859"]}}  # Rainier missing
+    zones.save(tmp_path / "local.json", local)
+    [top, *_] = zones.search(zones.load_best(tmp_path / "local.json"), "camp muir")
+    assert top.name == "Camp Muir Alpine Camp"

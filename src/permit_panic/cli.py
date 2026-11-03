@@ -60,11 +60,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{r.entity_type:<11} {r.entity_id:<10} {r.name}  ({r.parent})")
     elif args.cmd == "index":
         path = load_config(args.config).zones_file
-        index = zones.build(RecGov(min_interval=0.5),
+        index = zones.build(RecGov(min_interval=1.0), previous=zones.load_best(path),
                             progress=lambda i, n: print(f"\r{i}/{n} permits", end="", flush=True))
         zones.save(path, index)
         print(f"\nIndexed {sum(len(p['zones']) for p in index['permits'].values())} zones in "
               f"{len(index['permits'])} permits -> {path}")
+        for pid, why in index["failed"].items():
+            print(f"  couldn't fetch {pid} ({why}); kept its previous zones")
     elif args.cmd == "divisions":
         for div_id, name in api.permit_divisions(args.permit_id).items():
             if args.filter.lower() in name.lower():
