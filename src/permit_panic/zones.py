@@ -17,6 +17,10 @@ from pathlib import Path
 from .recgov import RecGov, RecGovError, SearchResult
 
 TTL = timedelta(days=7)
+# A snapshot shipped with the app, so zone search works before the watcher has built its own copy
+# (or on a machine with no watcher at all). Refresh it with: permit-panic index && cp .permit-panic-zones.json
+# src/permit_panic/data/zones.json
+BUNDLED = Path(__file__).parent / "data" / "zones.json"
 
 
 def build(api: RecGov, progress=None) -> dict:
@@ -39,6 +43,19 @@ def load(path: Path) -> dict | None:
         return json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+
+
+def load_best(path: Path | None) -> dict | None:
+    """The watcher's fresh index if there is one, else the bundled snapshot."""
+    index = load(path) if path else None
+    return index if index and index.get("permits") else load(BUNDLED)
+
+
+def describe(index: dict | None) -> str:
+    if not index:
+        return "Camp/trailhead search unavailable"
+    n = sum(len(p["zones"]) for p in index.get("permits", {}).values())
+    return f"Searching {n:,} camps/trailheads too (list from {index['built'][:10]})"
 
 
 def save(path: Path, index: dict) -> None:

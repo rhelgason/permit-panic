@@ -43,6 +43,7 @@ class SearchScreen(ModalScreen[SearchResult | None]):
             yield Label(self.title_text, classes="title")
             yield Input(placeholder="e.g. camp muir, grand teton backcountry, enchantments, jenny lake", id="q")
             yield OptionList(id="results")
+            yield Label(zones.describe(zones.load_best(self.zones_path)), classes="hint")
             yield Label("Enter to search, then pick a result. Esc to cancel.", classes="hint")
 
     @on(Input.Submitted, "#q")
@@ -57,7 +58,7 @@ class SearchScreen(ModalScreen[SearchResult | None]):
         except (RecGovError, OSError) as e:
             self.app.call_from_thread(self.app.notify, str(e), severity="error")
             return
-        index = zones.load(self.zones_path) if self.zones_path else None
+        index = zones.load_best(self.zones_path)
         zone_hits = zones.search(index, q)
         if self.permits_only:  # reminders are per permit: a zone hit stands for the permit it's in
             zone_hits = list({z.entity_id: SearchResult("permit", z.entity_id, z.parent, "") for z in zone_hits}.values())
@@ -65,9 +66,6 @@ class SearchScreen(ModalScreen[SearchResult | None]):
         named = sorted((r for r in found if r.entity_type in kinds), key=lambda r: r.entity_type != "permit")
         seen = {r.entity_id for r in zone_hits if r.entity_type == "permit"}
         self.results = zone_hits + [r for r in named if r.entity_id not in seen]
-        if index is None:
-            self.app.call_from_thread(self.app.notify, "Camp/trailhead search isn't ready yet; the watcher builds it "
-                                      "within a few minutes of starting.")
         self.app.call_from_thread(self._show)
 
     def _show(self) -> None:

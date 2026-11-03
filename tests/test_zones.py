@@ -45,3 +45,16 @@ def test_build_and_save_roundtrip(tmp_path):
     assert index["permits"] == {"1": {"name": "One", "zones": {"a": "Zone A"}}}  # broken listing skipped
     zones.save(tmp_path / "z.json", index)
     assert zones.load(tmp_path / "z.json")["permits"] == index["permits"]
+
+
+def test_bundled_snapshot_finds_camp_muir_with_no_local_index(tmp_path):
+    index = zones.load_best(tmp_path / "missing.json")
+    assert len(index["permits"]) > 100
+    [top, *_] = zones.search(index, "camp muir")
+    assert (top.name, top.entity_id) == ("Camp Muir Alpine Camp", "4675317")
+    assert zones.describe(index).startswith("Searching 3,")
+
+
+def test_local_index_wins_over_bundled(tmp_path):
+    zones.save(tmp_path / "z.json", INDEX)
+    assert zones.load_best(tmp_path / "z.json")["permits"] == INDEX["permits"]

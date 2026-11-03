@@ -7,6 +7,17 @@ from permit_panic.recgov import SearchResult
 from permit_panic.tui import PermitPanicApp, WatchForm
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_bundled_zones(monkeypatch, tmp_path):
+    """Keep the real shipped zone list out of these tests; each one sets up its own."""
+    from permit_panic import zones
+
+    monkeypatch.setattr(zones, "BUNDLED", tmp_path / "no-bundled-zones.json")
+
+
 class FakeApi:
     def search(self, q, size=10):
         return [SearchResult("permit", "4675342", "Grand Teton Backcountry", "Grand Teton NP"),

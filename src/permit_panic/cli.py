@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "search":
         q = " ".join(args.query)
-        for z in zones.search(zones.load(load_config(args.config).zones_file), q):
+        for z in zones.search(zones.load_best(load_config(args.config).zones_file), q):
             print(f"{'zone':<11} {z.entity_id:<10} {z.name}  (in {z.parent}; zone {z.division_id})")
         for r in api.search(q):
             print(f"{r.entity_type:<11} {r.entity_id:<10} {r.name}  ({r.parent})")
