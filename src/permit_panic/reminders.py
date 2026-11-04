@@ -14,7 +14,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 LEADS = (timedelta(hours=24), timedelta(minutes=30))
-_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\b\.?", re.I)
+_TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\b\.?(?:\s*\(?\b([ECMP])[SD]?T\b)?", re.I)
+# Listings name zones by letter ("10:00 AM ET/08:00 am MT"); each letter's IANA zone, and each park zone's letter.
+_ZONE_OF = {"E": "America/New_York", "C": "America/Chicago", "M": "America/Denver", "P": "America/Los_Angeles"}
+_LETTER_OF = {"America/New_York": "E", "America/Chicago": "C", "America/Denver": "M", "America/Boise": "M",
+              "America/Phoenix": "M", "America/Los_Angeles": "P"}
 _WINDOW = re.compile(r"lottery|appl", re.I)
 
 
@@ -31,22 +35,28 @@ class Event:
         return f"{self.permit_id}|{self.when.isoformat()}|{self.description[:40]}"
 
 
-def _parse_time(text: str) -> tuple[int, int] | None:
-    m = _TIME.search(text)
-    if not m:
+def _parse_time(text: str, park_zone: str) -> tuple[int, int, str] | None:
+    """(hour, minute, IANA zone the time is written in). With several times ("10:00 AM ET/08:00 am MT")
+    prefer the one in the park's own zone; otherwise trust the first time's own zone label, if any."""
+    found = list(_TIME.finditer(text))
+    if not found:
         return None
+    local = _LETTER_OF.get(park_zone)
+    m = next((f for f in found if f.group(4) and f.group(4).upper() == local), found[0])
     hour = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "p" else 0)
-    return hour, int(m.group(2) or 0)
+    zone = _ZONE_OF.get((m.group(4) or "").upper(), park_zone)
+    return hour, int(m.group(2) or 0), zone
 
 
 def parse_events(permit_id: str, payload: dict) -> list[Event]:
-    tz = ZoneInfo(payload.get("time_zone") or "America/Denver")
+    park_zone = payload.get("time_zone") or "America/Denver"
+    tz = ZoneInfo(park_zone)
     name = payload.get("name", permit_id)
     events = []
     for item in payload.get("important_dates") or []:
         desc = " ".join((item.get("description") or "").split())
-        hm = _parse_time(desc)
-        h, m = hm or (9, 0)
+        hm = _parse_time(desc, park_zone)
+        h, m, written_in = hm or (9, 0, park_zone)
         starts = [(item.get("start_date"), desc)]
         # Application windows ("lottery open Jan 1 - Jan 31") also deserve a closing reminder.
         if item.get("end_date") and _WINDOW.search(desc):
@@ -60,7 +70,7 @@ def parse_events(permit_id: str, payload: dict) -> list[Event]:
             if text.startswith("CLOSES") and not hm:
                 when = day.replace(hour=17, tzinfo=tz)
             else:
-                when = day.replace(hour=h, minute=m, tzinfo=tz)
+                when = day.replace(hour=h, minute=m, tzinfo=ZoneInfo(written_in)).astimezone(tz)
             events.append(Event(permit_id, name, when, text, hm is not None))
     return sorted(events, key=lambda e: e.when)
 

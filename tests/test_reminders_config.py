@@ -34,7 +34,7 @@ def test_parse_time_and_zone():
 
 def test_lottery_window_gets_open_and_close_reminders():
     events = parse_events("274309", WAVE)
-    assert [(e.when.month, e.when.day, e.when.hour) for e in events] == [(1, 1, 9), (1, 31, 17), (3, 1, 23)]
+    assert [(e.when.month, e.when.day, e.when.hour) for e in events] == [(1, 1, 9), (1, 31, 17), (3, 2, 0)]  # 11:59 pm PT is 12:59 am MT
     assert not events[0].time_known
     assert events[1].description.startswith("CLOSES")
 
@@ -66,3 +66,18 @@ def test_config_roundtrip_and_validation(tmp_path):
     with pytest.raises(ValueError):
         write_raw(path, raw)
     assert load_config(path).watches[0].latest.month == 7  # bad edit didn't clobber the file
+
+
+def test_prefers_the_parks_own_zone_when_several_are_given():
+    payload = {"name": "Teton", "time_zone": "America/Denver", "important_dates": [{
+        "description": "Advance backcountry permit reservations open Monday, January 11, 2026 at 10:00 AM ET/08:00 am MT",
+        "start_date": "January 11, 2027", "end_date": ""}]}
+    [e] = parse_events("4675342", payload)
+    assert e.when == datetime(2027, 1, 11, 8, 0, tzinfo=ZoneInfo("America/Denver"))
+
+
+def test_converts_a_time_written_in_another_zone():
+    payload = {"name": "Rainier", "time_zone": "America/Los_Angeles", "important_dates": [{
+        "description": "Sale opens at 10:00 AM ET", "start_date": "April 25, 2027", "end_date": ""}]}
+    [e] = parse_events("1", payload)
+    assert e.when == datetime(2027, 4, 25, 7, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
