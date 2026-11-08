@@ -24,7 +24,8 @@ PY
 }
 
 install_and_restart() {
-  as_permit .venv/bin/pip install -q -e . &&
+  # pip's chatter goes to a log; it's shown only if the install fails.
+  { as_permit .venv/bin/pip install -q -e . >/tmp/permit-panic-pip.log 2>&1 || { cat /tmp/permit-panic-pip.log; false; }; } &&
   # Write the new wrapper beside the old one and rename it in, so this running script isn't overwritten mid-read.
   install -m 755 deploy/permit-panic-wrapper.sh /usr/local/bin/permit-panic.new &&
   mv -f /usr/local/bin/permit-panic.new /usr/local/bin/permit-panic &&
