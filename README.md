@@ -36,6 +36,8 @@ cp examples/road-trip.toml config.toml   # set your Pushover keys
 
 Search also finds camps and trailheads *inside* permits, which Recreation.gov's own search can't: "camp muir" goes straight to Camp Muir Alpine Camp in the Mount Rainier Wilderness and Climbing permit, already ticked. The watcher keeps an index of all ~3,300 zones in Recreation.gov's 134 permits and rebuilds it weekly in the background; `permit-panic index` rebuilds it now.
 
+Saving a watch also turns on release and lottery reminders for its permit, and the confirmation says when the permit next goes on sale. Before a route watch is saved, its zones are checked for your dates: you're warned if a zone is walk-up only (it can't be reserved online, so the watch could never fire) or your group is bigger than the zone allows, and can change it or **Save anyway**. Each watch is checked every 3 minutes by default; set **Check every** to 1 for the most contested permits. Faster isn't offered, to stay polite to Recreation.gov from a server shared with Kalshi Desk.
+
 The dashboard edits `config.toml`. The watcher notices the change within seconds, runs the new watch, and sends a quiet "Now watching" ping to your phone. That ping proves the whole chain works: the config saved, the watcher is alive, Recreation.gov answered, and Pushover delivered. Run both on the same machine and use SSH for the dashboard.
 
 ## Notifications

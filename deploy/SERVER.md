@@ -16,12 +16,16 @@ Install, or reinstall, from your Mac with `deploy/install-on-server.sh`.
 ```bash
 alias panic='ssh -t root@104.131.18.118 permit-panic'   # put this in ~/.zshrc
 panic tui                     # the dashboard
-panic update                  # pull the latest main and restart
+panic update                  # install the latest main (see below)
 panic test-notify
 panic dates 4675342           # a permit's release / lottery dates
 panic search camp muir        # find a camp / trailhead inside a permit
 panic index                   # rebuild that search index now (the watcher does it weekly)
 ssh root@104.131.18.118 'systemctl status permit-panic --no-pager; journalctl -u permit-panic -n 50 --no-pager'
 ```
+
+`panic update` installs `main` only if GitHub's tests passed for that commit (`.github/workflows/tests.yml` runs
+them on every push), waits up to 5 minutes if they're still running, and rolls back to the previous version if the
+service doesn't come back up or the code doesn't import, so a bad push can't stop the watching.
 
 To change a Pushover key, edit `/etc/permit-panic.env`, then run `systemctl restart permit-panic`.
