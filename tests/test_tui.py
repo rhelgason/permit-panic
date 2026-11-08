@@ -137,3 +137,41 @@ def test_zone_search_hit_preselects_the_zone(tmp_path):
     asyncio.run(run())
     w = read_raw(cfg)["watch"][0]
     assert (w["permit_id"], w["nights"], w["name"]) == ("4675342", [["30"]], "Death Canyon Shelf")
+
+
+def test_save_warns_about_walk_up_only_zone_then_saves_anyway(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("")
+
+    class WalkUpApi(FakeApi):
+        def itinerary_payload(self, pid, div, y, m):
+            day = f"{y}-{m:02d}-05"
+            return {"bools": {day: True}, "rules": [{"name": "MaxGroupSize", "value": 6}],
+                    "quota_type_maps": {"ConstantQuotaUsageDaily": {day: {"total": 0, "remaining": 0}}}}
+
+    async def run():
+        app = PermitPanicApp(cfg, api=WalkUpApi())
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.press("a")
+            await pilot.press(*"teton", "enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            form = app.screen
+            form.selected = {"30"}
+            form.add_night()
+            form.query_one("#every").value = "1"
+            form.save()
+            await form.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.screen is form  # held back, with the warning shown
+            assert "walk-up only" in str(form.query_one("#error").render())
+            assert str(form.query_one("#save").label) == "Save anyway"
+            form.save()
+            await pilot.pause()
+
+    asyncio.run(run())
+    w = read_raw(cfg)["watch"][0]
+    assert w["nights"] == [["30"]] and w["every_minutes"] == 1.0

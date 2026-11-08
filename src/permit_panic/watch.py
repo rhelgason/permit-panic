@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import notify
-from .config import Config, Watch, load_config, read_raw
+from .config import Config, Watch, load_config, read_raw, write_raw
 from .matching import Match, summarize, match_campground, match_entry, match_itinerary, months_between, resolve_divisions
 from .recgov import RecGov, RecGovError, booking_url
 from .reminders import Event, describe_lead, due_alerts, parse_events, visible
@@ -56,8 +56,9 @@ def check(api: RecGov, w: Watch, names: dict[str, str]) -> list[Match]:
 
 
 def fingerprint(raw_watch: dict) -> str:
-    """Changes whenever the watch's settings change (ignoring on/off, which is reported separately)."""
-    body = {k: v for k, v in raw_watch.items() if k != "enabled"}
+    """Changes whenever what the watch looks for changes. On/off is reported separately, and check
+    speed doesn't change what counts as an opening, so neither re-alerts."""
+    body = {k: v for k, v in raw_watch.items() if k not in ("enabled", "every_minutes")}
     return hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
@@ -70,6 +71,7 @@ class Watcher:
         self.config_path = Path(config_path)
         self.api = api or RecGov()
         self._content: dict[str, tuple[float, dict]] = {}
+        self._last_check: dict[str, datetime] = {}
 
     def content(self, permit_id: str) -> dict:
         hit = self._content.get(permit_id)
@@ -88,19 +90,60 @@ class Watcher:
         except OSError as e:
             print(f"notify failed: {e}", flush=True)
 
-    def cycle(self, now: datetime | None = None) -> Config:
+    def _ensure_reminders(self, raw: dict, watches: list[Watch]) -> list[str]:
+        """Add a release/lottery reminder for each watch's permit that lacks one; returns the added ids."""
+        have = {str(r.get("permit_id")) for r in raw.get("reminder", [])}
+        added = []
+        for w in watches:
+            if w.kind == "campground" or w.entity_id in have:
+                continue
+            try:
+                name = self.content(w.entity_id).get("name") or w.name
+            except (RecGovError, OSError, KeyError, ValueError):
+                name = w.name
+            raw.setdefault("reminder", []).append({"name": name, "permit_id": w.entity_id})
+            have.add(w.entity_id)
+            added.append(w.entity_id)
+        if added:
+            write_raw(self.config_path, raw)
+        return added
+
+    def _next_event(self, permit_id: str, now: datetime) -> Event | None:
+        try:
+            upcoming = [e for e in parse_events(permit_id, self.content(permit_id)) if e.when > now]
+        except (RecGovError, OSError, KeyError, ValueError):
+            return None
+        return upcoming[0] if upcoming else None
+
+    def cycle(self, now: datetime | None = None, only_due: bool = False) -> Config:
+        """One pass. With only_due, skip watches checked more recently than their interval
+        (the loop ticks at the fastest watch's pace; slower watches keep their own)."""
         now = now or datetime.now(timezone.utc)
         local_now = now.astimezone()
         raw = read_raw(self.config_path)
         cfg = load_config(self.config_path)  # re-read so TUI edits apply without a restart
-        raw_by_name = {w.get("name"): w for w in raw.get("watch", [])}
         state = json.loads(cfg.state_file.read_text()) if cfg.state_file.exists() else {}
+        known_pre: dict = state.get("watches", {})
+        # Every watched permit gets release/lottery reminders: once for all existing watches (the
+        # backfill), then for each watch as it's added. Deleting a reminder afterwards sticks.
+        targets = cfg.watches if not state.get("auto_reminders") else [w for w in cfg.watches if w.name not in known_pre]
+        auto_added = self._ensure_reminders(raw, targets)
+        if auto_added:
+            raw, cfg = read_raw(self.config_path), load_config(self.config_path)
+        backfilled = auto_added if not state.get("auto_reminders") else []
+        raw_by_name = {w.get("name"): w for w in raw.get("watch", [])}
+        try:
+            prev_status = json.loads(cfg.status_file.read_text()).get("watches", {})
+        except (OSError, ValueError):
+            prev_status = {}
         first_run = not state
         seen: dict[str, list[str]] = state.get("openings", {})
         sent: set[str] = set(state.get("reminders_sent", []))
         known: dict[str, dict] = state.get("watches", {})  # name -> {fp, enabled, expired}
         errors: dict[str, dict] = state.get("errors", {})  # name -> {since, alerted}
-        known_reminders: list[str] = state.get("reminder_ids", [])
+        # Auto-added for a new watch: its "Now watching" ping already says so. Backfilled ones get their own ping.
+        known_reminders: list[str] = ([r for r in state.get("reminder_ids", []) if r not in backfilled]
+                                      + [a for a in auto_added if a not in backfilled])
         status: dict = {"watches": {}, "reminders": []}
         stamp = local_now.strftime("%H:%M:%S")
         low = {"priority": "low", "tags": "white_check_mark"}
@@ -123,6 +166,14 @@ class Watcher:
                 known[w.name] = {"fp": fp, "enabled": False}
                 continue
 
+            interval = timedelta(minutes=w.every_minutes or cfg.poll_minutes)
+            last = self._last_check.get(w.name)
+            changed = not prev or prev.get("fp") != fp or not prev.get("enabled", True)
+            if only_due and not changed and last and now - last < interval * 0.95:
+                if w.name in prev_status:
+                    status["watches"][w.name] = prev_status[w.name]
+                continue
+            self._last_check[w.name] = now
             try:
                 names = {} if w.kind == "campground" else self.names(w.entity_id)
                 matches = check(self.api, w, names)
@@ -147,13 +198,15 @@ class Watcher:
                 self._send(cfg, f"Fixed: {w.name}", "Checking normally again.", **low)
 
             if not first_run:
+                nxt = None if matches or w.kind == "campground" else self._next_event(w.entity_id, now)
+                desc = self._describe(w, len(matches), nxt, reminders_on=w.entity_id in auto_added)
                 if not prev:
-                    self._send(cfg, f"Now watching: {w.name}", self._describe(w, len(matches)), **low)
+                    self._send(cfg, f"Now watching: {w.name}", desc, **low)
                 elif prev.get("fp") != fp:
                     seen.pop(w.name, None)  # new criteria: re-alert on everything that matches them
-                    self._send(cfg, f"Updated: {w.name}", self._describe(w, len(matches)), **low)
+                    self._send(cfg, f"Updated: {w.name}", desc, **low)
                 elif not prev.get("enabled", True):
-                    self._send(cfg, f"Resumed: {w.name}", self._describe(w, len(matches)), **low)
+                    self._send(cfg, f"Resumed: {w.name}", desc, **low)
             known[w.name] = {"fp": fp, "enabled": True}
 
             prev_open = set(seen.get(w.name, []))
@@ -196,6 +249,7 @@ class Watcher:
         cfg.state_file.write_text(json.dumps({
             "openings": seen, "reminders_sent": sorted(sent), "watches": known, "errors": errors,
             "reminder_ids": [r.permit_id for r in cfg.reminders], "last_digest": last_digest,
+            "auto_reminders": True,
         }, indent=1))
         cfg.status_file.write_text(json.dumps(status, indent=1))
         if cfg.healthcheck_url:
@@ -229,11 +283,18 @@ class Watcher:
         return events
 
     @staticmethod
-    def _describe(w: Watch, n_open: int) -> str:
+    def _describe(w: Watch, n_open: int, nxt: Event | None = None, reminders_on: bool = False) -> str:
         what = {"itinerary": f"{_plural(len(w.nights), 'night')} route", "entry": f"{len(w.trailheads)} trailhead(s)",
                 "campground": f"{w.stay_nights}-night stay"}[w.kind]
         found = f"{n_open} open right now, alert coming." if n_open else "Nothing open yet. I'll ping you when there is."
-        return f"{what}, {w.earliest:%b %d} - {w.latest:%b %d %Y}, group of {w.group_size}.\nFirst check worked: {found}"
+        speed = f" Checking every {w.every_minutes:g} min." if w.every_minutes else ""
+        lines = [f"{what}, {w.earliest:%b %d} - {w.latest:%b %d %Y}, group of {w.group_size}.{speed}",
+                 f"First check worked: {found}"]
+        if nxt:
+            lines.append(f"Next for this permit: {nxt.description[:110]} ({nxt.when:%a %b %d %-I:%M %p %Z})")
+        if reminders_on:
+            lines.append("Release and lottery reminders are on for this permit.")
+        return "\n".join(lines)
 
     @staticmethod
     def _digest(cfg: Config, status: dict, now: datetime) -> str:
@@ -259,8 +320,9 @@ class Watcher:
                 print(f"zone index disabled: {e}", flush=True)
         while True:
             try:
-                cfg = self.cycle()
-                minutes = cfg.poll_minutes
+                cfg = self.cycle(only_due=True)
+                fastest = [w.every_minutes for w in cfg.watches if w.enabled and w.every_minutes]
+                minutes = min([cfg.poll_minutes, *fastest])
             except (ValueError, KeyError, OSError) as e:  # e.g. a hand-edit broke the config
                 print(f"config error: {e}", flush=True)
                 minutes = 1

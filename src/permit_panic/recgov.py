@@ -104,13 +104,15 @@ class RecGov:
 
     # --- availability ----------------------------------------------------
 
-    def itinerary_month(self, permit_id: str, division_id: str, year: int, month: int,
-                        group_size: int = 1) -> dict[date, bool]:
-        payload = self._get(
+    def itinerary_payload(self, permit_id: str, division_id: str, year: int, month: int) -> dict:
+        return self._get(
             f"/api/permititinerary/{permit_id}/division/{division_id}/availability/month",
             {"month": month, "year": year},
         )["payload"]
-        return parse_itinerary(payload, group_size)
+
+    def itinerary_month(self, permit_id: str, division_id: str, year: int, month: int,
+                        group_size: int = 1) -> dict[date, bool]:
+        return parse_itinerary(self.itinerary_payload(permit_id, division_id, year, month), group_size)
 
     def entry_month(self, permit_id: str, year: int, month: int) -> dict[date, dict[str, int]]:
         # This endpoint only accepts exact first/last-of-month bounds.
@@ -155,6 +157,36 @@ def parse_itinerary(payload: dict, group_size: int = 1) -> dict[date, bool]:
             and c.get("remaining", 0) >= (group_size if kind == "QuotaUsageByMemberDaily" else 1)
             for kind, c in cells.items()
         )
+    return out
+
+
+def zone_warnings(payloads: dict[str, list[dict]], names: dict[str, str], group_size: int,
+                  earliest: date, latest: date) -> list[str]:
+    """Problems with a route's zones for these dates, before you save the watch:
+    a zone that is walk-up only for every released date in the range (Recreation.gov's calendar
+    still marks it "available", but it can't be booked online), and a group bigger than the
+    zone allows. Dates not on sale yet have no quota data and are not judged."""
+    out = []
+    for div, months in payloads.items():
+        name = names.get(div, div)
+        released = walkup = 0
+        max_group = None
+        for payload in months:
+            for rule in payload.get("rules") or []:
+                if rule.get("name") == "MaxGroupSize" and not rule.get("inactive"):
+                    max_group = int(rule["value"])
+            quotas = payload.get("quota_type_maps") or {}
+            for d in (payload.get("bools") or {}):
+                if not earliest <= date.fromisoformat(d) <= latest:
+                    continue
+                cells = [days[d] for days in quotas.values() if d in days]
+                if cells:
+                    released += 1
+                    walkup += all(c.get("total", 0) == 0 for c in cells)
+        if released and walkup == released:
+            out.append(f"{name} is walk-up only on these dates: it can't be reserved online, so this watch would never fire.")
+        if max_group is not None and group_size > max_group:
+            out.append(f"{name} allows at most {max_group} people; your group is {group_size}.")
     return out
 
 

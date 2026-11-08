@@ -30,6 +30,7 @@ class Watch:
     stay_nights: int = 1  # campground
     sites: list[str] = field(default_factory=list)  # campground
     enabled: bool = True
+    every_minutes: float | None = None  # check this watch more often than poll_minutes (min 1)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Watch":
@@ -49,7 +50,10 @@ class Watch:
             stay_nights=int(d.get("nights", 1)) if kind == "campground" else 1,
             sites=[str(s) for s in d.get("sites", [])],
             enabled=bool(d.get("enabled", True)),
+            every_minutes=float(d["every_minutes"]) if d.get("every_minutes") else None,
         )
+        if w.every_minutes is not None and w.every_minutes < 1:
+            raise ValueError(f"{w.name}: check at most once a minute")
         if w.latest < w.earliest:
             raise ValueError(f"{w.name}: latest is before earliest")
         if kind == "itinerary" and not w.nights:

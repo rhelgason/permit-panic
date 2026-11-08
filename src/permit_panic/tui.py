@@ -89,9 +89,12 @@ class WatchForm(ModalScreen[dict | None]):
 
     BINDINGS = [("escape", "dismiss(None)", "Cancel")]
 
-    def __init__(self, result: SearchResult, kind: str, divisions: dict[str, str], existing: Watch | None = None):
+    def __init__(self, result: SearchResult, kind: str, divisions: dict[str, str], existing: Watch | None = None,
+                 api: RecGov | None = None):
         super().__init__()
         self.result, self.kind, self.divisions, self.existing = result, kind, divisions, existing
+        self.api = api
+        self._warned = False  # second Save press after a warning saves anyway
         # Picked from a camp-zone search hit: start with that zone ticked.
         self.selected: set[str] = {result.division_id} if result.division_id in divisions else set()
         self.nights: list[list[str]] = []
@@ -124,6 +127,9 @@ class WatchForm(ModalScreen[dict | None]):
                 with Horizontal(classes="row"):
                     yield Label("Group size ", classes="hint")
                     yield Input(str(e.group_size if e else 2), placeholder="people", id="group_size")
+            with Horizontal(classes="row"):
+                yield Label("Check every (minutes) ", classes="hint")
+                yield Input(f"{e.every_minutes:g}" if e and e.every_minutes else "3", placeholder="3", id="every")
             if self.kind == "campground":
                 with Horizontal(classes="row"):
                     yield Input(str(e.stay_nights if e else 2), placeholder="consecutive nights", id="stay")
@@ -178,6 +184,7 @@ class WatchForm(ModalScreen[dict | None]):
             self.query_one("#error", Label).update("Tick at least one zone for this night.")
             return
         self.nights.append(sorted(self.selected))
+        self._reset_check()
         self._clear_selection()
         self._show_route()
 
@@ -185,6 +192,7 @@ class WatchForm(ModalScreen[dict | None]):
     def undo_night(self) -> None:
         if self.nights:
             self.nights.pop()
+            self._reset_check()
             self._show_route()
 
     @on(Button.Pressed, "#cancel")
@@ -207,13 +215,52 @@ class WatchForm(ModalScreen[dict | None]):
             else:
                 d["nights"] = int(val("stay"))
                 d["sites"] = [s.strip() for s in val("sites").split(",") if s.strip()]
+            every = float(val("every") or 3)
+            if every != 3:
+                d["every_minutes"] = every
             if self.existing and not self.existing.enabled:
                 d["enabled"] = False  # editing doesn't silently resume a paused watch
             Watch.from_dict(d)
         except (ValueError, KeyError) as e:
             self.query_one("#error", Label).update(str(e))
             return
-        self.dismiss(d)
+        if self.kind == "itinerary" and self.api and not self._warned:
+            self.query_one("#error", Label).update("Checking these zones for your dates…")
+            self.check_zones(d)
+        else:
+            self.dismiss(d)
+
+    @work(thread=True, exclusive=True)
+    def check_zones(self, d: dict) -> None:
+        from .matching import months_between
+
+        try:
+            divs = sorted({z for night in d["nights"] for z in night})
+            months = months_between(d["earliest"], d["latest"])[:4]  # enough to judge, without a slow save
+            payloads = {div: [self.api.itinerary_payload(d["permit_id"], div, y, m) for y, m in months] for div in divs}
+            from .recgov import zone_warnings
+
+            warnings = zone_warnings(payloads, self.divisions, d.get("group_size", 1), d["earliest"], d["latest"])
+        except Exception:  # a failed check must never block saving
+            warnings = []
+        self.app.call_from_thread(self._after_check, d, warnings)
+
+    @on(Input.Changed, "#group_size, #earliest, #latest")
+    def _reset_check(self, event=None) -> None:
+        """Changing what the warning was about means it should be checked again."""
+        if self._warned:
+            self._warned = False
+            self.query_one("#save", Button).label = "Save"
+            self.query_one("#error", Label).update("")
+
+    def _after_check(self, d: dict, warnings: list[str]) -> None:
+        if not warnings:
+            self.dismiss(d)
+            return
+        self._warned = True
+        self.query_one("#error", Label).update("\n".join(f"⚠ {w}" for w in warnings) +
+                                               "\nChange the zones or group size, or press Save anyway.")
+        self.query_one("#save", Button).label = "Save anyway"
 
 
 class PermitPanicApp(App):
@@ -375,7 +422,7 @@ class PermitPanicApp(App):
         except (RecGovError, OSError) as e:
             self.call_from_thread(self.notify, str(e), severity="error")
             return
-        self.call_from_thread(self.push_screen, WatchForm(result, kind, divisions), self._save_watch)
+        self.call_from_thread(self.push_screen, WatchForm(result, kind, divisions, api=self.api), self._save_watch)
 
     def _save_watch(self, d: dict | None, replacing: str | None = None) -> None:
         if not d:
@@ -419,7 +466,7 @@ class PermitPanicApp(App):
         except (RecGovError, OSError) as e:
             self.call_from_thread(self.notify, str(e), severity="error")
             return
-        self.call_from_thread(self.push_screen, WatchForm(result, w.kind, divisions, existing=w),
+        self.call_from_thread(self.push_screen, WatchForm(result, w.kind, divisions, existing=w, api=self.api),
                               lambda d: self._save_watch(d, replacing=w.name))
 
     def action_mute(self) -> None:

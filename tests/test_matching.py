@@ -93,3 +93,21 @@ def test_booking_url_opens_on_the_opening_date():
         "https://www.recreation.gov/permits/4675338/registration/detailed-availability?date=2026-12-05")
     assert booking_url("permit", "4675342") == "https://www.recreation.gov/permits/4675342"
     assert booking_url("campground", "232447", D(2026, 12, 5)) == "https://www.recreation.gov/camping/campgrounds/232447"
+
+
+def test_zone_warnings():
+    from permit_panic.recgov import zone_warnings
+
+    def payload(total, max_group=None, days=(1, 2)):
+        d = {f"2026-12-{x:02d}": True for x in days}
+        cell = {"total": total, "remaining": total}
+        rules = [{"name": "MaxGroupSize", "value": max_group}] if max_group else []
+        return {"bools": d, "rules": rules,
+                "quota_type_maps": {"ConstantQuotaUsageDaily": {k: cell for k in d}} if total is not None else {}}
+
+    names = {"3": "La Verkin Creek 3", "2": "La Verkin Creek 2", "m": "Camp Muir Alpine Camp"}
+    w = zone_warnings({"3": [payload(0)], "2": [payload(1, max_group=4)], "m": [payload(None)]},
+                      names, 6, D(2026, 12, 1), D(2026, 12, 31))
+    assert w == ["La Verkin Creek 3 is walk-up only on these dates: it can't be reserved online, so this watch would never fire.",
+                 "La Verkin Creek 2 allows at most 4 people; your group is 6."]  # unreleased Camp Muir: no verdict
+    assert zone_warnings({"2": [payload(1, max_group=4)]}, names, 4, D(2026, 12, 1), D(2026, 12, 31)) == []

@@ -1,5 +1,6 @@
 """Every notification the watcher can send, driven through real cycles with a fake Recreation.gov."""
 
+import json
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -157,12 +158,12 @@ def test_expired_watch_reports_once(tmp_path, sent):
 
 def test_reminder_confirmation_and_alerts(tmp_path, sent):
     cfg = tmp_path / "config.toml"
-    write_raw(cfg, {"watch": [watch()]})
+    write_raw(cfg, {})
     w = Watcher(cfg, FakeApi())
     w.cycle(NOW - timedelta(days=5))
     sent.clear()
 
-    write_raw(cfg, {"watch": [watch()], "reminder": [{"name": "Teton", "permit_id": "1"}]})
+    write_raw(cfg, {"reminder": [{"name": "Teton", "permit_id": "1"}]})
     w.cycle(NOW - timedelta(days=5))
     assert [t for t, _ in sent] == ["Reminders on: Teton"]
 
@@ -255,3 +256,81 @@ def test_pushover_keys_from_env_win(tmp_path, monkeypatch):
     monkeypatch.setenv("PUSHOVER_TOKEN", "from-env")
     c = load_config(cfg)
     assert (c.pushover_user, c.pushover_token, c.opening_sound) == ("from-file", "from-env", "bugle")
+
+
+def test_backfill_turns_on_reminders_for_existing_watches_once(tmp_path, sent):
+    import json
+
+    cfg = tmp_path / "config.toml"
+    write_raw(cfg, {"watch": [watch()]})
+    w = Watcher(cfg, FakeApi())
+    w.cycle(NOW - timedelta(days=5))
+    # Simulate a server that ran an older version: state exists, without the backfill flag, and no reminders.
+    state_path = tmp_path / ".permit-panic-state.json"
+    state = json.loads(state_path.read_text())
+    state.pop("auto_reminders")
+    state_path.write_text(json.dumps(state))
+    write_raw(cfg, {"watch": [watch()]})
+    sent.clear()
+
+    w.cycle(NOW - timedelta(days=5))
+    assert read_raw(cfg)["reminder"] == [{"name": "Teton", "permit_id": "1"}]
+    assert [t for t, _ in sent] == ["Reminders on: Teton"]
+
+    write_raw(cfg, {"watch": [watch()]})  # you delete the reminder on purpose
+    sent.clear()
+    w.cycle(NOW - timedelta(days=5))
+    assert "reminder" not in read_raw(cfg) and sent == []
+
+
+def test_new_watch_turns_on_reminders_and_says_when_it_goes_on_sale(tmp_path, monkeypatch):
+    from permit_panic import notify
+
+    bodies = []
+    monkeypatch.setattr(notify, "send", lambda title, body, **kw: bodies.append((title, body)))
+    cfg = tmp_path / "config.toml"
+    write_raw(cfg, {})
+    api = FakeApi()
+    api.open_days = set()
+    w = Watcher(cfg, api)
+    w.cycle(NOW - timedelta(days=5))
+    write_raw(cfg, {"watch": [watch()]})
+    w.cycle(NOW - timedelta(days=5))
+    assert [t for t, _ in bodies] == ["Now watching: Teton"]  # one ping, no separate "Reminders on"
+    body = bodies[0][1]
+    assert "Next for this permit: Reservations open 8:00 a.m. MT (Mon Jan 11 8:00 AM MST)" in body
+    assert "reminders are on" in body
+    assert read_raw(cfg)["reminder"][0]["permit_id"] == "1"
+
+
+def test_each_watch_is_checked_at_its_own_pace(tmp_path, sent):
+    cfg = tmp_path / "config.toml"
+    write_raw(cfg, {"poll_minutes": 3, "watch": [watch(name="Fast", every_minutes=1), watch(name="Slow")]})
+    api = FakeApi()
+    calls = []
+    real = api.itinerary_month
+    api.itinerary_month = lambda *a, **k: calls.append(1) or real(*a, **k)
+    w = Watcher(cfg, api)
+    t0 = NOW - timedelta(days=5)
+    w.cycle(t0, only_due=True)
+    first = len(calls)
+    for minute in (1, 2):
+        calls.clear()
+        w.cycle(t0 + timedelta(minutes=minute), only_due=True)
+        assert len(calls) == first // 2  # only the 1-minute watch
+    calls.clear()
+    w.cycle(t0 + timedelta(minutes=3), only_due=True)
+    assert len(calls) == first  # both again
+    status = json.loads((tmp_path / ".permit-panic-status.json").read_text())
+    assert set(status["watches"]) == {"Fast", "Slow"}
+
+
+def test_changing_check_speed_does_not_re_alert(tmp_path, sent):
+    cfg = tmp_path / "config.toml"
+    write_raw(cfg, {"watch": [watch()]})
+    w = Watcher(cfg, FakeApi())
+    w.cycle(NOW - timedelta(days=5))
+    sent.clear()
+    write_raw(cfg, {"watch": [watch(every_minutes=1)]})
+    w.cycle(NOW - timedelta(days=5))
+    assert sent == []

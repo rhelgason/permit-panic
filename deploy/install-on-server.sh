@@ -38,7 +38,7 @@ cd "$APP"
 [ -x .venv/bin/python ] || sudo -u permit python3 -m venv .venv
 sudo -u permit .venv/bin/pip install -q --upgrade pip
 sudo -u permit .venv/bin/pip install -q -e .
-install -m 755 deploy/permit-panic-wrapper.sh /usr/local/bin/permit-panic
+install -m 755 deploy/permit-panic-wrapper.sh /usr/local/bin/permit-panic.new && mv -f /usr/local/bin/permit-panic.new /usr/local/bin/permit-panic
 install -m 644 deploy/permit-panic.service /etc/systemd/system/permit-panic.service
 touch /etc/permit-panic.env && chown root:permit /etc/permit-panic.env && chmod 640 /etc/permit-panic.env
 REMOTE
